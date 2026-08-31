@@ -21,3 +21,6 @@ venv.bak/
 .DS_Store
 Thumbs.db
 *.log
+
+# Archivo de records locales generado en ejecucion
+# hiscores.json (opcional: dejar visible o ignorar segun preferencia)

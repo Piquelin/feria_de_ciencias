@@ -1,70 +1,99 @@
 # 📽️ Proyección Interactiva con YOLO Pose & Sistema de Partículas
 
-Aplicación visual interactiva en tiempo real diseñada para charlas, stands de ferias, instalaciones interactivas y demostraciones de **Visión Computacional Aplicada**.
+Aplicación visual interactiva en tiempo real diseñada para **charlas, stands de ferias de ciencias, instalaciones interactivas y demostraciones de Visión Computacional Aplicada**.
 
-Utiliza **YOLO Pose (YOLO26 / YOLO11)** para extraer puntos clave corporales y faciales en tiempo real, gobernando dinámicas de viento físico, comunicación aumentativa y videojuegos asistivos.
-
----
-
-## 🌟 Características y Modos
-
-1. **Vectores de Viento por Brazos / Puños:**
-   - Vector dinámico con origen en la nariz y destino en la(s) muñeca(s)/mano(s).
-   - **Suma Vectorial con Dos Manos:** Levantar ambos brazos calcula la fuerza y dirección resultante de viento.
-   - **Control de Desbalance (Vector Cap):** Longitud máxima limitada (`0.35`) y atenuación de brazos en reposo para evitar corrientes descendentes involuntarias.
-   - **Calibración Global:** Fricción `0.88`, Velocidad máxima `8.0`, Fuerza de viento `1.5x`, Radio `155px`.
-   - **Reinicio por Gesto:** Juntar ambas manos/muñecas frente a la cámara (🙌) reinicia el enjambre o el juego.
-
-2. **3 Modos para la Demostración / Feria:**
-   - `[1] Swarm / Vórtice`: Partículas en órbita alrededor del rostro impulsadas con precisión por los vectores de las manos.
-   - `[2] Cuadrante Accesible (AAC)`: **Demostración de Impacto Real (Tecnología Asistiva)**. 4 grandes zonas (HOLA, GRACIAS, AGUA, AYUDA) + SÍ/NO central. Al mirar/apuntar con la cabeza hacia una zona durante solo 0.6s, el sistema la selecciona y la **reproduce en voz alta (Text-to-Speech en español)**.
-   - `[3] 🎮 Juego: Reventar Burbujas`: Burbujas flotantes que el usuario debe **tocar y reventar con la nariz/cabeza**, con contador de puntuación y explosiones de chispas en tiempo real.
-
-3. **Optimización para Proyección:**
-   - `[I] Invertir B/W`: Alterna al instante entre **Fondo Negro con Partículas Blancas** y **Fondo Blanco con Tinta Negra Sólida**.
-   - `[F] Pantalla Completa`: Vista limpia y sin bordes.
-   - `[H] Ocultar HUD`: Esconde los controles y sliders para proyección artística inmersiva pura.
-   - `[R] o Gesto 🙌`: Reiniciar partículas o juego.
+Utiliza **YOLO Pose (YOLO26 / YOLO11)** para extraer puntos clave corporales y faciales en tiempo real, gobernando dinámicas de viento físico, comunicación aumentativa y videojuegos interactivos de competencia con soporte para 1 y 2 participantes.
 
 ---
 
-## 🚀 Instalación y Ejecución en otra Notebook
+## 🌟 Modos de la Aplicación
 
-### Opción A (Recomendada en Windows - 1 Clic)
-Simplemente haz doble clic en:
+### `[1] Swarm / Vórtice de Partículas`
+- Partículas físicas en órbita alrededor del rostro y guiadas por la inclinación de la cabeza.
+- **Vectores de Viento Dinámico por Manos/Brazos:** Al levantar uno o ambos brazos, se proyecta un vector de fuerza direccional (nariz ➔ muñecas) que empuja el enjambre de partículas en tiempo real.
+- **Limitador Vectorial & Zona Muerta:** Evita corrientes descendentes accidentales cuando los brazos cuelgan en reposo.
+
+### `[2] Tablero Accesible AAC (Tecnología Asistiva)`
+- **Demostración de impacto social:** 4 cuadrantes gigantes (`HOLA`, `GRACIAS`, `AGUA`, `AYUDA`) + barra central (`SÍ` / `NO`).
+- **Dwell Time:** Al apuntar con la nariz/cabeza durante 0.6s sobre cualquier tarjeta, se selecciona y se **reproduce en voz alta en español (Text-to-Speech)**.
+
+### `[3] 🎮 Juego de Competencia: Reventar Burbujas`
+- **Timer de Competencia:** Temporizador calibrable (30s a 120s, 60s por defecto) con cuenta regresiva sonora y visual (**3... 2... 1... ¡YA!**).
+- **Modo 1 Jugador o 2 Jugadores (Versus):**
+  - **Jugador 1:** Puntero y partículas en **Verde Neón**.
+  - **Jugador 2:** Puntero y partículas en **Naranja Fuego**.
+  - Puntuación individual y anuncio de ganador al llegar a 0s.
+- **Overlay Permanente para Proyección:** El Timer gigante y los puntajes siguen flotando de forma limpia incluso al ocultar el menú con `[H]`.
+- **Registro Local de High Scores:** Almacena automáticamente los récords en `hiscores.json` con tabla de consulta (`🏆 VER RÉCORDS`).
+
+---
+
+## ⚙️ Calibración, Control & Rendimiento
+
+| Control / Atajo | Función |
+| :--- | :--- |
+| **`[1]`, `[2]`, `[3]`** | Alternar entre Modos Visuales (Swarm, Tablero AAC, Juego Burbujas). |
+| **`[Espacio]`** | Iniciar / Reiniciar partida de competencia en el juego de burbujas. |
+| **`[H]`** | **Ocultar / Mostrar HUD** (deja la proyección limpia; en modo juego el timer y puntos se mantienen visibles). |
+| **`[I]`** | **Invertir B/W** (alterna entre Fondo Negro / Fondo Blanco para proyección con luz ambiental). |
+| **`[F]`** | Activar / Salir de **Pantalla Completa**. |
+| **`[R]`** | Reiniciar partículas y burbujas. |
+| **`🔘 Gesto Reset`** | Toggle en HUD para activar/desactivar el reinicio por manos juntas (puños). Desactivado por defecto. |
+| **`⏹️ DETENER APP`** | Botón en el HUD para apagar el servidor y liberar la cámara web limpiamente. |
+
+---
+
+## 🚀 Perfiles de Rendimiento (Optimizados para Laptops)
+
+El panel del HUD incluye un selector de perfiles de velocidad con **indicador de latencia en milisegundos (`ms`)** y **FPS en tiempo real**:
+
+- 🚀 **Ultra Rápido (192p + Frame-Skip):** Inferencia ultraliviana para notebooks modestas (como Intel Core i7-4510U en CPU). Tasa de **35-45+ FPS** con latencia de ~15-20ms.
+- ⚡ **Turbo CPU (256p):** Rendimiento ágil y equilibrado (~28-35 FPS).
+- ⚖️ **Equilibrado (384p):** Excelente definición y estabilidad (~20-25 FPS).
+- 🎯 **Alta Precisión (640p):** Resolución nativa completa para equipos con GPU de alta gama.
+
+---
+
+## 💻 Instalación y Puesta en Marcha
+
+### Requisitos Previos
+- Python 3.10, 3.11 o 3.12 instalado.
+- Cámara web integrada o USB conectada.
+
+### Opción 1: Windows (1 Clic)
+Haz doble clic en:
 ```bat
 run_app.bat
 ```
-*(El script creará automáticamente el entorno virtual `venv`, instalará los requerimientos, abrirá el navegador y levantará el servidor).*
+*(Crea automáticamente el entorno virtual `venv`, instala dependencias, abre el navegador e inicia el servidor).*
 
-### Opción B (Linux / macOS / Git Bash)
+### Opción 2: Linux / macOS / Git Bash
 ```bash
 chmod +x run_app.sh
 ./run_app.sh
 ```
 
-### Opción C (Manual con Terminal)
-1. Clona el repositorio y entra en la carpeta:
-```bash
-git clone <URL_DEL_REPOSITORIO>
-cd app_yolo_projection
-```
-2. Crea y activa tu entorno virtual:
-```bash
+### Opción 3: Manual por Terminal
+```powershell
+# 1. Crear y activar entorno virtual
 python -m venv venv
-# En Windows:
 venv\Scripts\activate
-# En Linux/Mac:
-source venv/bin/activate
-```
-3. Instala las dependencias:
-```bash
+
+# 2. Instalar dependencias
 pip install -r requirements.txt
-```
-4. Ejecuta la aplicación:
-```bash
+
+# 3. Iniciar servidor
 python app.py
 ```
-5. Abre en tu navegador: **http://localhost:5001**
+Abre en tu navegador: **`http://localhost:5001`**
 
->>>>>>> d9fdcf1 (Initial commit: Proyeccion Interactiva YOLO Pose & Modos Feria de Ciencias)
+---
+
+## ⚡ Aceleración por GPU (NVIDIA CUDA) - Opcional
+
+Si tu notebook o PC cuenta con GPU NVIDIA y deseas aceleración por hardware:
+```powershell
+pip uninstall -y torch torchvision torchaudio
+pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
+```
+Al arrancar, `app.py` detectará la GPU automáticamente, realizará un test de verificación seguro (*warmup*) y mostrará la insignia verde **`CUDA`** en el HUD. Si la GPU es muy antigua o no compatible, conmuta automáticamente a **CPU Optimizada** sin interrumpir la aplicación.
