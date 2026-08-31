@@ -1,14 +1,16 @@
 /**
  * ParticleEngine - Motor de partículas físico optimizado para proyección interactiva B&W
+ * Soporta Modo 1P y 2P, optimización de rendimiento para notebooks y renderizado adaptativo.
  */
 class ParticleEngine {
     constructor(canvas) {
         this.canvas = canvas;
         this.ctx = canvas.getContext('2d');
         this.particles = [];
-        this.numParticles = 2000;
-        this.mode = 'swarm'; // 'swarm', 'trails'
+        this.numParticles = 1800;
+        this.mode = 'swarm'; // 'swarm', 'quadrant', 'bubbles'
         this.isInverted = false;
+        this.multiplayer = false; // 1P vs 2P
         
         this.width = window.innerWidth;
         this.height = window.innerHeight;
@@ -23,18 +25,25 @@ class ParticleEngine {
                 friction: 0.88,
                 gravity: 0.003
             },
-            trails: {
-                vortexRadius: 155,
-                windStrength: 1.5,
-                maxSpeed: 8.0,
-                friction: 0.88,
-                gravity: 0.003
+            quadrant: {
+                vortexRadius: 120,
+                windStrength: 1.0,
+                maxSpeed: 5.0,
+                friction: 0.90,
+                gravity: 0.001
+            },
+            bubbles: {
+                vortexRadius: 100,
+                windStrength: 1.0,
+                maxSpeed: 6.0,
+                friction: 0.92,
+                gravity: 0.001
             }
         };
 
         this.params = { ...this.modeParams.swarm };
 
-        // Cursor interactivo
+        // Jugador 1 (Principal)
         this.cursor = {
             x: this.width / 2,
             y: this.height / 2,
@@ -46,9 +55,27 @@ class ParticleEngine {
             active: false
         };
 
-        // Caras detectadas secundarias
+        // Jugador 2 (Secundario)
+        this.cursorP2 = {
+            x: this.width * 0.75,
+            y: this.height / 2,
+            targetX: this.width * 0.75,
+            targetY: this.height / 2,
+            tilt: 0,
+            scale: 1,
+            speed: 0,
+            active: false
+        };
+
         this.faces = [];
         this.lastResetGesture = false;
+
+        // Estado del juego
+        this.gameScoreP1 = 0;
+        this.gameScoreP2 = 0;
+        this.gameActive = false;
+        this.bubbles = [];
+        this.popSparks = [];
 
         this.initParticles();
     }
@@ -65,10 +92,23 @@ class ParticleEngine {
         if (this.modeParams[newMode]) {
             this.params = { ...this.modeParams[newMode] };
         }
+        
+        // Optimización de rendimiento para notebooks modestas:
+        // Reducir la cantidad de partículas si entramos a modo juego de burbujas
+        if (newMode === 'bubbles') {
+            this.numParticles = 250; // Alivia drásticamente la GPU/CPU integrada
+        } else {
+            this.numParticles = 1600;
+        }
+        this.initParticles();
     }
 
     setInverted(val) {
         this.isInverted = val;
+    }
+
+    setMultiplayer(enabled) {
+        this.multiplayer = enabled;
     }
 
     initParticles() {
@@ -96,7 +136,8 @@ class ParticleEngine {
         if (!data) return;
         this.faces = data.faces || [];
         
-        if (data.detected && data.primary_cursor) {
+        // Tracking Jugador 1
+        if (data.detected && data.primary_cursor && data.primary_cursor.active) {
             const pc = data.primary_cursor;
             this.cursor.targetX = pc.x * this.width;
             this.cursor.targetY = pc.y * this.height;
@@ -109,7 +150,6 @@ class ParticleEngine {
             this.cursor.handsActive = pc.hands_active || 0;
             this.cursor.active = true;
 
-            // Detección de gesto para reinicio automático (manos juntas)
             if (pc.gesture_reset && !this.lastResetGesture) {
                 this.initParticles();
                 if (window.onParticleResetGesture) {
@@ -121,22 +161,37 @@ class ParticleEngine {
             this.cursor.active = false;
             this.lastResetGesture = false;
         }
+
+        // Tracking Jugador 2
+        if (data.secondary_cursor && data.secondary_cursor.active) {
+            const sc = data.secondary_cursor;
+            this.cursorP2.targetX = sc.x * this.width;
+            this.cursorP2.targetY = sc.y * this.height;
+            this.cursorP2.tilt = sc.tilt;
+            this.cursorP2.scale = sc.scale;
+            this.cursorP2.speed = sc.speed;
+            this.cursorP2.active = true;
+        } else {
+            this.cursorP2.active = false;
+        }
     }
 
     update() {
-        // Suavizado fluido de posición del cursor
         const lerpFactor = 0.35;
+        // Suavizado P1
         this.cursor.x += (this.cursor.targetX - this.cursor.x) * lerpFactor;
         this.cursor.y += (this.cursor.targetY - this.cursor.y) * lerpFactor;
 
+        // Suavizado P2
+        if (this.cursorP2.active) {
+            this.cursorP2.x += (this.cursorP2.targetX - this.cursorP2.x) * lerpFactor;
+            this.cursorP2.y += (this.cursorP2.targetY - this.cursorP2.y) * lerpFactor;
+        }
+
         const cx = this.cursor.x;
         const cy = this.cursor.y;
-        
-        // Radio de vórtice calibrado más compacto y controlable
         const influenceRadius = this.params.vortexRadius * (this.cursor.scale ? Math.max(this.cursor.scale * 2.0, 0.7) : 1);
         
-        // VECTOR DE VIENTO DIRECCIONAL PROYECTADO DESDE LA NARIZ HACIA LA(S) MANO(S):
-        // Si hay una o dos manos activas, el vector resultante empuja las partículas con fuerza
         const handWindX = (this.cursor.windVx || 0) * this.params.windStrength * 5.0;
         const handWindY = (this.cursor.windVy || 0) * this.params.windStrength * 5.0;
 
@@ -147,37 +202,29 @@ class ParticleEngine {
             const dist = Math.sqrt(dx * dx + dy * dy) || 1;
 
             if (this.mode === 'swarm') {
-                // Modo 1: Enjambre & Vórtice orbital con influencia directa de viento e inclinación
                 if (this.cursor.active) {
                     if (dist < influenceRadius) {
                         const force = (1 - dist / influenceRadius);
                         
-                        // Repulsión si se mueve rápido la cabeza
                         if (this.cursor.speed > 0.8) {
                             p.vx += (dx / dist) * force * 8;
                             p.vy += (dy / dist) * force * 8;
                         } else {
-                            // Vórtice rotacional controlado
                             const vortexAngle = Math.atan2(dy, dx) + Math.PI / 2;
                             p.vx += Math.cos(vortexAngle) * force * 2.8;
                             p.vy += Math.sin(vortexAngle) * force * 2.8;
-                            
-                            // Atracción gravitacional al centro de la cara
                             p.vx += (cx - p.x) * this.params.gravity * force;
                             p.vy += (cy - p.y) * this.params.gravity * force;
                         }
 
-                        // Empuje directo del viento de las manos en el área de influencia
                         p.vx += handWindX * force * 1.6;
                         p.vy += handWindY * force * 1.6;
                     }
                 }
 
-                // Corriente de viento ambiental generada por los vectores de las manos
                 p.vx += handWindX * 0.25;
                 p.vy += handWindY * 0.25;
 
-                // Fricción y límite de velocidad para evitar aceleraciones descontroladas
                 p.vx *= this.params.friction;
                 p.vy *= this.params.friction;
 
@@ -191,21 +238,18 @@ class ParticleEngine {
                 p.y += p.vy;
 
             } else if (this.mode === 'bubbles') {
-                // Modo 4: Juego de Burbujas - partículas suaves de fondo
                 p.x += p.vx * 0.5 + handWindX * 0.1;
                 p.y += p.vy * 0.5 + handWindY * 0.1;
                 p.vx *= 0.95;
                 p.vy *= 0.95;
             }
 
-            // Rebote / reaparición continua en bordes de pantalla
             if (p.x < 0) { p.x = this.width; }
             if (p.x > this.width) { p.x = 0; }
             if (p.y < 0) { p.y = this.height; }
             if (p.y > this.height) { p.y = 0; }
         }
 
-        // Actualizar burbujas del juego
         if (this.mode === 'bubbles') {
             this.updateBubbles();
         }
@@ -213,31 +257,34 @@ class ParticleEngine {
 
     initBubbles() {
         this.bubbles = [];
-        for (let i = 0; i < 7; i++) {
+        const count = this.multiplayer ? 10 : 7;
+        for (let i = 0; i < count; i++) {
             this.spawnBubble();
         }
-        this.bubbleScore = 0;
+        this.gameScoreP1 = 0;
+        this.gameScoreP2 = 0;
         this.popSparks = [];
     }
 
     spawnBubble() {
         this.bubbles.push({
-            x: Math.random() * (this.width - 160) + 80,
+            x: Math.random() * (this.width - 180) + 90,
             y: this.height + Math.random() * 80 + 30,
-            radius: Math.random() * 20 + 35,
+            radius: Math.random() * 22 + 34,
             speedY: Math.random() * 1.5 + 1.2,
             wobble: Math.random() * Math.PI * 2,
             wobbleSpeed: Math.random() * 0.04 + 0.02,
-            color: '#00ff88',
             popped: false
         });
     }
 
     updateBubbles() {
-        if (!this.bubbles) this.initBubbles();
+        if (!this.bubbles || this.bubbles.length === 0) this.initBubbles();
 
-        const cx = this.cursor.x;
-        const cy = this.cursor.y;
+        const c1x = this.cursor.x;
+        const c1y = this.cursor.y;
+        const c2x = this.cursorP2.x;
+        const c2y = this.cursorP2.y;
 
         for (let i = this.bubbles.length - 1; i >= 0; i--) {
             const b = this.bubbles[i];
@@ -245,43 +292,63 @@ class ParticleEngine {
             b.wobble += b.wobbleSpeed;
             b.x += Math.sin(b.wobble) * 1.2;
 
-            // Detección de colisión con el cursor de la cabeza
+            let hit = false;
+            let playerHit = null;
+
+            // Colisión Jugador 1
             if (this.cursor.active) {
-                const dist = Math.hypot(b.x - cx, b.y - cy);
-                if (dist < b.radius + 18) {
-                    // ¡BURBUJA REVENTADA!
-                    this.createBubblePopEffect(b.x, b.y, b.radius);
-                    this.bubbles.splice(i, 1);
-                    this.spawnBubble();
-                    this.bubbleScore++;
-                    if (window.onBubblePopped) {
-                        window.onBubblePopped(this.bubbleScore);
-                    }
-                    continue;
+                const dist1 = Math.hypot(b.x - c1x, b.y - c1y);
+                if (dist1 < b.radius + 20) {
+                    hit = true;
+                    playerHit = 1;
                 }
             }
 
-            // Si sale por arriba, reaparece abajo
+            // Colisión Jugador 2 (Modo multijugador)
+            if (!hit && this.multiplayer && this.cursorP2.active) {
+                const dist2 = Math.hypot(b.x - c2x, b.y - c2y);
+                if (dist2 < b.radius + 20) {
+                    hit = true;
+                    playerHit = 2;
+                }
+            }
+
+            if (hit) {
+                const color = (playerHit === 2) ? '#ff9900' : '#00ff88';
+                this.createBubblePopEffect(b.x, b.y, b.radius, color);
+                this.bubbles.splice(i, 1);
+                this.spawnBubble();
+
+                if (playerHit === 1) this.gameScoreP1++;
+                if (playerHit === 2) this.gameScoreP2++;
+
+                if (window.onBubblePopped) {
+                    window.onBubblePopped(this.gameScoreP1, this.gameScoreP2, playerHit);
+                }
+                continue;
+            }
+
             if (b.y < -b.radius * 2) {
                 this.bubbles.splice(i, 1);
                 this.spawnBubble();
             }
         }
 
-        // Actualizar chispas de explosión
+        // Actualizar chispas de partículas al reventar
         if (this.popSparks) {
             for (let i = this.popSparks.length - 1; i >= 0; i--) {
                 const s = this.popSparks[i];
                 s.x += s.vx;
                 s.y += s.vy;
-                s.alpha *= 0.92;
+                s.alpha *= 0.91;
                 if (s.alpha < 0.05) this.popSparks.splice(i, 1);
             }
         }
     }
 
-    createBubblePopEffect(x, y, radius) {
+    createBubblePopEffect(x, y, radius, sparkColor) {
         if (!this.popSparks) this.popSparks = [];
+        const baseColor = sparkColor || (this.isInverted ? '#000000' : '#00ff88');
         for (let i = 0; i < 22; i++) {
             const angle = Math.random() * Math.PI * 2;
             const speed = Math.random() * 6 + 2;
@@ -292,7 +359,7 @@ class ParticleEngine {
                 vy: Math.sin(angle) * speed,
                 radius: Math.random() * 3 + 1.5,
                 alpha: 1.0,
-                color: this.isInverted ? '#000000' : '#00ff88'
+                color: baseColor
             });
         }
     }
@@ -300,7 +367,7 @@ class ParticleEngine {
     render() {
         const ctx = this.ctx;
         const color = this.isInverted ? '#000000' : '#ffffff';
-        const trailAlpha = this.mode === 'trails' ? 0.08 : 0.25;
+        const trailAlpha = 0.25;
 
         // Limpiar canvas con estela (trail effect)
         ctx.fillStyle = this.isInverted 
@@ -308,7 +375,7 @@ class ParticleEngine {
             : `rgba(0, 0, 0, ${trailAlpha})`;
         ctx.fillRect(0, 0, this.width, this.height);
 
-        // Renderizado de partículas de fondo
+        // Renderizado de partículas de ambiente
         ctx.fillStyle = color;
         for (let i = 0; i < this.particles.length; i++) {
             const p = this.particles[i];
@@ -319,7 +386,7 @@ class ParticleEngine {
         }
         ctx.globalAlpha = 1.0;
 
-        // Renderizar Burbujas del Juego (Modo 4)
+        // Renderizar Burbujas del Juego
         if (this.mode === 'bubbles' && this.bubbles) {
             this.bubbles.forEach(b => {
                 ctx.save();
@@ -329,11 +396,9 @@ class ParticleEngine {
                 ctx.arc(b.x, b.y, b.radius, 0, Math.PI * 2);
                 ctx.stroke();
 
-                // Brillo interno de la burbuja
                 ctx.fillStyle = this.isInverted ? 'rgba(0, 0, 0, 0.06)' : 'rgba(0, 255, 136, 0.12)';
                 ctx.fill();
 
-                // Destello especular
                 ctx.fillStyle = this.isInverted ? 'rgba(0, 0, 0, 0.5)' : 'rgba(255, 255, 255, 0.7)';
                 ctx.beginPath();
                 ctx.arc(b.x - b.radius * 0.35, b.y - b.radius * 0.35, b.radius * 0.2, 0, Math.PI * 2);
@@ -341,7 +406,6 @@ class ParticleEngine {
                 ctx.restore();
             });
 
-            // Renderizar chispas de reventón
             if (this.popSparks) {
                 this.popSparks.forEach(s => {
                     ctx.save();
@@ -355,18 +419,37 @@ class ParticleEngine {
             }
         }
 
-        // Dibujar indicador dinámico del cursor facial (solo en modos interactivos)
+        // Puntero Player 1 en Canvas
         if (this.cursor.active && (this.mode === 'quadrant' || this.mode === 'bubbles')) {
             ctx.save();
             ctx.translate(this.cursor.x, this.cursor.y);
             ctx.rotate(this.cursor.tilt);
-
-            // Anillo central con micropulsación
             ctx.strokeStyle = '#00ff88';
-            ctx.lineWidth = 2;
+            ctx.lineWidth = 2.5;
             ctx.beginPath();
-            ctx.arc(0, 0, 18 + Math.sin(Date.now() * 0.008) * 3, 0, Math.PI * 2);
+            ctx.arc(0, 0, 20 + Math.sin(Date.now() * 0.008) * 3, 0, Math.PI * 2);
             ctx.stroke();
+            if (this.multiplayer) {
+                ctx.fillStyle = '#00ff88';
+                ctx.font = 'bold 12px monospace';
+                ctx.fillText('P1', 25, -5);
+            }
+            ctx.restore();
+        }
+
+        // Puntero Player 2 en Canvas (si está activo)
+        if (this.multiplayer && this.cursorP2.active && this.mode === 'bubbles') {
+            ctx.save();
+            ctx.translate(this.cursorP2.x, this.cursorP2.y);
+            ctx.rotate(this.cursorP2.tilt);
+            ctx.strokeStyle = '#ff9900';
+            ctx.lineWidth = 2.5;
+            ctx.beginPath();
+            ctx.arc(0, 0, 20 + Math.sin(Date.now() * 0.008) * 3, 0, Math.PI * 2);
+            ctx.stroke();
+            ctx.fillStyle = '#ff9900';
+            ctx.font = 'bold 12px monospace';
+            ctx.fillText('P2', 25, -5);
             ctx.restore();
         }
     }

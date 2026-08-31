@@ -10,8 +10,10 @@
     --bg-color: #000000;
     --fg-color: #ffffff;
     --accent-glow: rgba(255, 255, 255, 0.9);
-    --panel-bg: rgba(10, 10, 10, 0.75);
+    --panel-bg: rgba(10, 10, 10, 0.85);
     --panel-border: rgba(255, 255, 255, 0.2);
+    --p1-color: #00ff88;
+    --p2-color: #ff9900;
     --font-mono: "SF Mono", "Consolas", "Courier New", monospace;
 }
 
@@ -20,7 +22,7 @@ body.inverted {
     --bg-color: #ffffff;
     --fg-color: #000000;
     --accent-glow: rgba(0, 0, 0, 0.9);
-    --panel-bg: rgba(245, 245, 245, 0.85);
+    --panel-bg: rgba(245, 245, 245, 0.88);
     --panel-border: rgba(0, 0, 0, 0.2);
 }
 
@@ -45,57 +47,224 @@ html, body {
     z-index: 1;
 }
 
-/* Cursor Facial Visual de Alta Visibilidad (Pointer Láser / Guía) */
-#faceCursorIndicator {
+/* Cursors Faciales Láser */
+#faceCursorIndicator, #faceCursorIndicatorP2 {
     position: absolute;
     width: 36px;
     height: 36px;
-    border: 3px solid #00ff88;
     border-radius: 50%;
     pointer-events: none;
     transform: translate(-50%, -50%);
     transition: opacity 0.15s ease, transform 0.08s ease;
     z-index: 9999;
-    box-shadow: 0 0 20px #00ff88, 0 0 10px rgba(0, 255, 136, 0.8);
     display: none;
 }
 
-#faceCursorIndicator::before {
+#faceCursorIndicator.cursor-p1 {
+    border: 3px solid var(--p1-color);
+    box-shadow: 0 0 20px var(--p1-color), 0 0 10px rgba(0, 255, 136, 0.8);
+}
+
+#faceCursorIndicatorP2.cursor-p2 {
+    border: 3px solid var(--p2-color);
+    box-shadow: 0 0 20px var(--p2-color), 0 0 10px rgba(255, 153, 0, 0.8);
+}
+
+#faceCursorIndicator::before, #faceCursorIndicatorP2::before {
     content: '';
     position: absolute;
     top: 50%;
     left: 50%;
     width: 8px;
     height: 8px;
-    background: #00ff88;
     border-radius: 50%;
     transform: translate(-50%, -50%);
-    box-shadow: 0 0 8px #00ff88;
 }
 
-/* Cruz de mira de francotirador / guía precisa */
-#faceCursorIndicator::after {
-    content: '';
-    position: absolute;
-    top: -8px;
-    bottom: -8px;
-    left: 50%;
-    width: 2px;
-    background: rgba(0, 255, 136, 0.7);
-    transform: translateX(-50%);
-}
+#faceCursorIndicator.cursor-p1::before { background: var(--p1-color); box-shadow: 0 0 8px var(--p1-color); }
+#faceCursorIndicatorP2.cursor-p2::before { background: var(--p2-color); box-shadow: 0 0 8px var(--p2-color); }
 
-#faceCursorIndicator .cross-h {
+#faceCursorIndicator .cross-h, #faceCursorIndicatorP2 .cross-h {
     position: absolute;
     left: -8px;
     right: -8px;
     top: 50%;
     height: 2px;
-    background: rgba(0, 255, 136, 0.7);
     transform: translateY(-50%);
 }
+#faceCursorIndicator .cross-h { background: rgba(0, 255, 136, 0.7); }
+#faceCursorIndicatorP2 .cross-h { background: rgba(255, 153, 0, 0.7); }
 
-/* HUD Overlay */
+.cursor-tag {
+    position: absolute;
+    top: -20px;
+    left: 50%;
+    transform: translateX(-50%);
+    font-size: 0.7rem;
+    font-weight: 900;
+    padding: 1px 4px;
+    border-radius: 3px;
+    background: rgba(0, 0, 0, 0.8);
+    color: #fff;
+}
+
+/* ========================================================= */
+/* OVERLAY FLOTANTE PERMANENTE PARA EL JUEGO (PROYECCIÓN)   */
+/* ========================================================= */
+.game-floating-overlay {
+    position: absolute;
+    top: 20px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 15; /* Superior al canvas pero independiente del HUD */
+    pointer-events: none;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 16px;
+}
+
+.game-floating-overlay.hidden {
+    display: none;
+}
+
+.game-top-bar {
+    display: flex;
+    align-items: center;
+    gap: 24px;
+}
+
+/* Tarjeta del Timer */
+.game-timer-card {
+    background: var(--panel-bg);
+    border: 2px solid var(--fg-color);
+    padding: 8px 24px;
+    border-radius: 14px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    backdrop-filter: blur(12px);
+    box-shadow: 0 6px 25px rgba(0, 0, 0, 0.8);
+}
+
+.timer-label {
+    font-size: 0.7rem;
+    letter-spacing: 1.5px;
+    opacity: 0.8;
+}
+
+.timer-clock {
+    font-size: 2.2rem;
+    font-weight: 900;
+    letter-spacing: 2px;
+    color: #00e5ff;
+    text-shadow: 0 0 15px rgba(0, 229, 255, 0.6);
+}
+
+.timer-clock.urgent {
+    color: #ff3333;
+    animation: pulseTimer 0.6s infinite alternate;
+}
+
+@keyframes pulseTimer {
+    from { transform: scale(1); text-shadow: 0 0 10px #ff3333; }
+    to { transform: scale(1.15); text-shadow: 0 0 25px #ff0000; }
+}
+
+/* Tarjetas de Marcador de Jugadores */
+.player-score-card {
+    background: var(--panel-bg);
+    border-radius: 12px;
+    padding: 8px 20px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    backdrop-filter: blur(12px);
+    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.7);
+    transition: transform 0.2s ease;
+}
+
+.player-score-card.p1-card {
+    border: 2px solid var(--p1-color);
+}
+.player-score-card.p1-card .p-avatar {
+    background: var(--p1-color);
+    color: #000;
+}
+.player-score-card.p1-card .p-points {
+    color: var(--p1-color);
+}
+
+.player-score-card.p2-card {
+    border: 2px solid var(--p2-color);
+}
+.player-score-card.p2-card .p-avatar {
+    background: var(--p2-color);
+    color: #000;
+}
+.player-score-card.p2-card .p-points {
+    color: var(--p2-color);
+}
+
+.player-score-card.hidden {
+    display: none;
+}
+
+.p-avatar {
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    font-weight: 900;
+    font-size: 0.85rem;
+}
+
+.p-info {
+    display: flex;
+    flex-direction: column;
+}
+
+.p-name {
+    font-size: 0.65rem;
+    letter-spacing: 1px;
+    opacity: 0.8;
+}
+
+.p-points {
+    font-size: 1.8rem;
+    font-weight: 900;
+    line-height: 1;
+}
+
+/* Gran Anuncio en Centro de Pantalla */
+.game-big-notice {
+    background: rgba(0, 0, 0, 0.85);
+    border: 3px solid #00e5ff;
+    padding: 16px 40px;
+    border-radius: 20px;
+    font-size: 2.5rem;
+    font-weight: 900;
+    letter-spacing: 2px;
+    color: #ffffff;
+    box-shadow: 0 0 40px rgba(0, 229, 255, 0.8);
+    backdrop-filter: blur(14px);
+    animation: noticePop 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+}
+
+.game-big-notice.hidden {
+    display: none;
+}
+
+@keyframes noticePop {
+    0% { transform: scale(0.6); opacity: 0; }
+    100% { transform: scale(1); opacity: 1; }
+}
+
+/* ========================================================= */
+/* HUD Overlay Ocultable con [H]                             */
+/* ========================================================= */
 #hudContainer {
     position: absolute;
     top: 0;
@@ -103,7 +272,7 @@ html, body {
     width: 100%;
     height: 100%;
     pointer-events: none;
-    z-index: 10;
+    z-index: 20;
     transition: opacity 0.3s ease;
 }
 
@@ -112,7 +281,7 @@ html, body {
     pointer-events: none;
 }
 
-/* Panel Superior: Estado & Modos */
+/* Panel Superior */
 .hud-header {
     position: absolute;
     top: 24px;
@@ -120,17 +289,26 @@ html, body {
     right: 32px;
     display: flex;
     justify-content: space-between;
-    align-items: flex-start;
+    align-items: center;
 }
 
 .hud-title {
-    font-size: 1.1rem;
+    font-size: 1rem;
     font-weight: 700;
     letter-spacing: 2px;
     text-transform: uppercase;
     display: flex;
     align-items: center;
     gap: 12px;
+}
+
+.device-badge {
+    font-size: 0.65rem;
+    background: rgba(255, 255, 255, 0.15);
+    border: 1px solid var(--panel-border);
+    padding: 2px 6px;
+    border-radius: 4px;
+    color: #00ff88;
 }
 
 .status-dot {
@@ -151,22 +329,49 @@ html, body {
     box-shadow: 0 0 10px var(--accent-glow);
 }
 
+.hud-actions {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    pointer-events: auto;
+}
+
 .hud-metrics {
     display: flex;
-    gap: 20px;
-    font-size: 0.85rem;
+    gap: 16px;
+    font-size: 0.8rem;
     opacity: 0.85;
     background: var(--panel-bg);
-    padding: 8px 16px;
+    padding: 6px 14px;
     border-radius: 6px;
     border: 1px solid var(--panel-border);
     backdrop-filter: blur(8px);
 }
 
-/* Modos Visuales Selector */
+.btn-shutdown {
+    background: #cc2222;
+    color: #fff;
+    border: 1px solid #ff4444;
+    font-family: inherit;
+    font-size: 0.75rem;
+    font-weight: bold;
+    padding: 6px 14px;
+    border-radius: 6px;
+    cursor: pointer;
+    backdrop-filter: blur(8px);
+    transition: all 0.2s ease;
+}
+
+.btn-shutdown:hover {
+    background: #ee0000;
+    box-shadow: 0 0 12px rgba(255, 0, 0, 0.6);
+    transform: translateY(-2px);
+}
+
+/* Modos Visuales */
 .mode-selector {
     position: absolute;
-    top: 80px;
+    top: 75px;
     left: 32px;
     display: flex;
     gap: 8px;
@@ -210,10 +415,10 @@ html, body {
     opacity: 0.7;
 }
 
-/* Panel de Calibración Rápida en Vivo */
+/* Panel de Calibración & Rendimiento */
 .quick-tuning-panel {
     position: absolute;
-    top: 135px;
+    top: 130px;
     left: 32px;
     background: var(--panel-bg);
     border: 1px solid var(--panel-border);
@@ -221,7 +426,7 @@ html, body {
     padding: 12px 16px;
     font-size: 0.75rem;
     backdrop-filter: blur(10px);
-    width: 250px;
+    width: 270px;
     display: flex;
     flex-direction: column;
     gap: 8px;
@@ -242,6 +447,25 @@ html, body {
     display: flex;
     flex-direction: column;
     gap: 3px;
+}
+
+.tuning-row.toggle-row {
+    flex-direction: row;
+    justify-content: space-between;
+    align-items: center;
+    padding: 4px 0;
+}
+
+.tuning-select {
+    background: rgba(30, 30, 30, 0.9);
+    color: #fff;
+    border: 1px solid var(--panel-border);
+    padding: 4px 8px;
+    border-radius: 4px;
+    font-family: inherit;
+    font-size: 0.75rem;
+    outline: none;
+    cursor: pointer;
 }
 
 .tuning-row label {
@@ -273,7 +497,197 @@ html, body {
     cursor: pointer;
 }
 
-/* Panel Inferior: Atajos y Calibración */
+/* Panel de Control Específico del Juego de Burbujas */
+.game-control-panel {
+    position: absolute;
+    top: 130px;
+    right: 32px;
+    background: var(--panel-bg);
+    border: 1px solid var(--panel-border);
+    border-radius: 8px;
+    padding: 14px 18px;
+    font-size: 0.75rem;
+    backdrop-filter: blur(10px);
+    width: 290px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    pointer-events: auto;
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.6);
+}
+
+.game-control-panel.hidden {
+    display: none;
+}
+
+.player-toggle-group {
+    display: flex;
+    gap: 6px;
+}
+
+.btn-toggle {
+    flex: 1;
+    background: rgba(255, 255, 255, 0.08);
+    border: 1px solid var(--panel-border);
+    color: var(--fg-color);
+    font-family: inherit;
+    font-size: 0.7rem;
+    padding: 6px 8px;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.btn-toggle.active {
+    background: #00ff88;
+    color: #000;
+    font-weight: bold;
+    border-color: #00ff88;
+}
+
+.game-btn-group {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin-top: 4px;
+}
+
+.btn-start-game {
+    background: #00ff88;
+    color: #000;
+    border: none;
+    font-family: inherit;
+    font-size: 0.85rem;
+    font-weight: 900;
+    padding: 10px;
+    border-radius: 6px;
+    cursor: pointer;
+    box-shadow: 0 0 15px rgba(0, 255, 136, 0.4);
+    transition: all 0.2s ease;
+}
+
+.btn-start-game:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 0 20px rgba(0, 255, 136, 0.7);
+}
+
+.btn-view-hiscores {
+    background: rgba(255, 255, 255, 0.1);
+    color: var(--fg-color);
+    border: 1px solid var(--panel-border);
+    font-family: inherit;
+    font-size: 0.75rem;
+    padding: 6px;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.btn-view-hiscores:hover {
+    background: rgba(255, 255, 255, 0.2);
+}
+
+/* Modal de Highscores */
+.modal-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100vw;
+    height: 100vh;
+    background: rgba(0, 0, 0, 0.8);
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    z-index: 10000;
+    backdrop-filter: blur(8px);
+}
+
+.modal-overlay.hidden {
+    display: none;
+}
+
+.modal-content {
+    background: #111;
+    border: 2px solid #00ff88;
+    border-radius: 12px;
+    width: 600px;
+    max-width: 90vw;
+    max-height: 80vh;
+    display: flex;
+    flex-direction: column;
+    box-shadow: 0 0 40px rgba(0, 255, 136, 0.4);
+    overflow: hidden;
+}
+
+.modal-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 16px 20px;
+    border-bottom: 1px solid #333;
+}
+
+.modal-header h2 {
+    font-size: 1.1rem;
+    color: #00ff88;
+    letter-spacing: 1px;
+}
+
+.modal-close {
+    background: none;
+    border: none;
+    color: #fff;
+    font-size: 1.5rem;
+    cursor: pointer;
+}
+
+.modal-body {
+    padding: 16px 20px;
+    overflow-y: auto;
+}
+
+.hiscores-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.8rem;
+}
+
+.hiscores-table th, .hiscores-table td {
+    padding: 8px 10px;
+    text-align: left;
+    border-bottom: 1px solid #222;
+}
+
+.hiscores-table th {
+    color: #888;
+    font-size: 0.7rem;
+    text-transform: uppercase;
+}
+
+.hiscores-table .table-score {
+    font-weight: bold;
+    color: #00ff88;
+}
+
+.modal-footer {
+    padding: 12px 20px;
+    border-top: 1px solid #333;
+    display: flex;
+    justify-content: flex-end;
+}
+
+.btn-primary {
+    background: #00ff88;
+    color: #000;
+    border: none;
+    padding: 8px 16px;
+    font-family: inherit;
+    font-weight: bold;
+    border-radius: 4px;
+    cursor: pointer;
+}
+
+/* Footer Atajos */
 .hud-footer {
     position: absolute;
     bottom: 24px;
@@ -284,19 +698,15 @@ html, body {
     align-items: flex-end;
 }
 
-.gesture-badge {
-    color: #00ff88;
-}
-
 .shortcuts-guide {
     background: var(--panel-bg);
     border: 1px solid var(--panel-border);
-    padding: 12px 18px;
+    padding: 10px 16px;
     border-radius: 6px;
     font-size: 0.75rem;
     backdrop-filter: blur(8px);
     display: flex;
-    gap: 20px;
+    gap: 16px;
     pointer-events: auto;
 }
 
@@ -315,7 +725,6 @@ html, body {
     font-size: 0.75rem;
 }
 
-/* Mini Camara Preview */
 .cam-preview-box {
     width: 180px;
     height: 120px;
@@ -346,7 +755,7 @@ html, body {
     color: #fff;
 }
 
-/* MODO 3: Tablero Cuadrante Accesible (Grandes Zonas) */
+/* Cuadrantes AAC */
 .quadrant-board-container {
     position: absolute;
     top: 50%;
@@ -367,8 +776,6 @@ html, body {
 
 .quadrant-board-container.hidden {
     display: none;
-    opacity: 0;
-    pointer-events: none;
 }
 
 .quadrant-card {
@@ -416,7 +823,6 @@ html, body {
     transform: scale(0.97);
 }
 
-/* Barra central SÍ / NO y Estado */
 .quadrant-center-bar {
     grid-column: span 2;
     display: flex;
@@ -467,53 +873,7 @@ html, body {
     transition: width 0.05s linear;
 }
 
-/* MODO 4: Juego de Burbujas HUD */
-.game-hud-container {
-    position: absolute;
-    top: 90px;
-    left: 50%;
-    transform: translateX(-50%);
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 8px;
-    z-index: 20;
-    pointer-events: none;
-}
-
-.game-hud-container.hidden {
-    display: none;
-}
-
-.game-score-badge {
-    background: var(--panel-bg);
-    border: 2px solid #00ff88;
-    padding: 10px 24px;
-    border-radius: 30px;
-    font-size: 1.2rem;
-    font-weight: bold;
-    letter-spacing: 1px;
-    backdrop-filter: blur(10px);
-    box-shadow: 0 0 20px rgba(0, 255, 136, 0.5);
-    display: flex;
-    gap: 12px;
-    align-items: center;
-}
-
-.game-score-badge strong {
-    font-size: 1.6rem;
-    color: #00ff88;
-}
-
-.game-tip {
-    font-size: 0.8rem;
-    opacity: 0.85;
-    background: rgba(0, 0, 0, 0.6);
-    padding: 4px 12px;
-    border-radius: 12px;
-}
-
-/* Notificación flotante temporal */
+/* Toast */
 .toast-msg {
     position: absolute;
     bottom: 90px;
