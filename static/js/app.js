@@ -8,6 +8,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const toast = document.getElementById('toastMsg');
     const statusDot = document.getElementById('statusDot');
     const fpsDisplay = document.getElementById('fpsDisplay');
+    const latencyDisplay = document.getElementById('latencyDisplay');
     const faceCountDisplay = document.getElementById('faceCountDisplay');
     const deviceBadge = document.getElementById('deviceBadge');
     const modeBtns = document.querySelectorAll('.mode-btn');
@@ -70,6 +71,7 @@ document.addEventListener('DOMContentLoaded', () => {
     let gameState = 'idle'; // 'idle', 'countdown', 'playing', 'finished'
 
     function showToast(msg) {
+        if (!toast) return;
         toast.textContent = msg;
         toast.classList.add('show');
         clearTimeout(toast._timeout);
@@ -101,7 +103,7 @@ document.addEventListener('DOMContentLoaded', () => {
         vortexSlider.addEventListener('input', (e) => {
             const val = parseFloat(e.target.value);
             engine.params.vortexRadius = val;
-            vortexVal.textContent = `${val}px`;
+            if (vortexVal) vortexVal.textContent = `${val}px`;
         });
     }
 
@@ -109,7 +111,7 @@ document.addEventListener('DOMContentLoaded', () => {
         windSlider.addEventListener('input', (e) => {
             const val = parseFloat(e.target.value);
             engine.params.windStrength = val;
-            windVal.textContent = `${val.toFixed(1)}x`;
+            if (windVal) windVal.textContent = `${val.toFixed(1)}x`;
         });
     }
 
@@ -117,7 +119,7 @@ document.addEventListener('DOMContentLoaded', () => {
         speedSlider.addEventListener('input', (e) => {
             const val = parseFloat(e.target.value);
             engine.params.maxSpeed = val;
-            speedVal.textContent = `${val.toFixed(1)}`;
+            if (speedVal) speedVal.textContent = `${val.toFixed(1)}`;
         });
     }
 
@@ -125,7 +127,7 @@ document.addEventListener('DOMContentLoaded', () => {
         frictionSlider.addEventListener('input', (e) => {
             const val = parseFloat(e.target.value);
             engine.params.friction = val;
-            frictionVal.textContent = `${val.toFixed(2)}`;
+            if (frictionVal) frictionVal.textContent = `${val.toFixed(2)}`;
         });
     }
 
@@ -142,22 +144,26 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
-    // Selector de Calidad / Inferencia (Turbo 320p / 384p / 640p)
+    // Selector de Calidad / Inferencia con frame-skip adaptativo
     if (inferenceSizeSelect) {
         inferenceSizeSelect.addEventListener('change', (e) => {
             const sz = parseInt(e.target.value);
+            // Si es 192p activar frame_skip=2 para vuelo supersónico
+            const skip = (sz === 192) ? 2 : 1;
             fetch('/config', {
                 method: 'POST',
-                body: JSON.stringify({ inference_size: sz })
+                body: JSON.stringify({ inference_size: sz, frame_skip: skip })
             }).then(() => {
-                showToast(`INFERENCIA YOLO: ${sz}x${sz}p`);
+                const label = (sz === 192) ? '192p (ULTRA RÁPIDO)' : (sz === 256 ? '256p (TURBO)' : (sz === 384 ? '384p (EQUILIBRADO)' : '640p (ALTA PRECISIÓN)'));
+                showToast(`PERFIL YOLO: ${label}`);
             });
         });
     }
 
     // Botón de Apagado Limpio
     if (btnShutdown) {
-        btnShutdown.addEventListener('click', () => {
+        btnShutdown.addEventListener('click', (e) => {
+            e.stopPropagation();
             if (confirm('¿Deseas apagar el servidor y liberar la cámara web?')) {
                 fetch('/shutdown', { method: 'POST' })
                     .then(res => res.json())
@@ -202,7 +208,7 @@ document.addEventListener('DOMContentLoaded', () => {
     if (gameDurationSlider) {
         gameDurationSlider.addEventListener('input', (e) => {
             gameDurationSeconds = parseInt(e.target.value);
-            timerSettingVal.textContent = `${gameDurationSeconds}s`;
+            if (timerSettingVal) timerSettingVal.textContent = `${gameDurationSeconds}s`;
             if (gameState === 'idle') {
                 updateTimerDisplay(gameDurationSeconds);
             }
@@ -232,27 +238,27 @@ document.addEventListener('DOMContentLoaded', () => {
         
         gameState = 'countdown';
         engine.initBubbles();
-        scoreP1El.textContent = '0';
-        scoreP2El.textContent = '0';
+        if (scoreP1El) scoreP1El.textContent = '0';
+        if (scoreP2El) scoreP2El.textContent = '0';
         timeRemaining = gameDurationSeconds;
         updateTimerDisplay(timeRemaining);
 
-        gameBigNotice.classList.remove('hidden');
+        if (gameBigNotice) gameBigNotice.classList.remove('hidden');
         let count = 3;
-        gameBigNoticeText.textContent = count;
+        if (gameBigNoticeText) gameBigNoticeText.textContent = count;
         speakText(`${count}`);
 
         const countInterval = setInterval(() => {
             count--;
             if (count > 0) {
-                gameBigNoticeText.textContent = count;
+                if (gameBigNoticeText) gameBigNoticeText.textContent = count;
                 speakText(`${count}`);
             } else if (count === 0) {
-                gameBigNoticeText.textContent = '¡YA!';
+                if (gameBigNoticeText) gameBigNoticeText.textContent = '¡YA!';
                 speakText('¡A jugar!');
             } else {
                 clearInterval(countInterval);
-                gameBigNotice.classList.add('hidden');
+                if (gameBigNotice) gameBigNotice.classList.add('hidden');
                 beginGameRun();
             }
         }, 1000);
@@ -260,7 +266,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     function beginGameRun() {
         gameState = 'playing';
-        btnStartGame.textContent = '⏹ REINICIAR PARTIDA';
+        if (btnStartGame) btnStartGame.textContent = '⏹ REINICIAR PARTIDA';
 
         if (gameTimerInterval) clearInterval(gameTimerInterval);
         
@@ -281,7 +287,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     function finishGame() {
         gameState = 'finished';
-        btnStartGame.textContent = '▶ INICIAR PARTIDA';
+        if (btnStartGame) btnStartGame.textContent = '▶ INICIAR PARTIDA';
         
         const p1 = engine.gameScoreP1;
         const p2 = engine.gameScoreP2;
@@ -305,15 +311,14 @@ document.addEventListener('DOMContentLoaded', () => {
             winnerMsg = `¡Fin del tiempo! Reventaste ${p1} burbujas.`;
         }
 
-        gameBigNoticeText.textContent = winnerText;
-        gameBigNotice.classList.remove('hidden');
+        if (gameBigNoticeText) gameBigNoticeText.textContent = winnerText;
+        if (gameBigNotice) gameBigNotice.classList.remove('hidden');
         speakText(winnerMsg);
 
-        // Guardar High Score local
         saveHighScore(p1, p2);
 
         setTimeout(() => {
-            gameBigNotice.classList.add('hidden');
+            if (gameBigNotice) gameBigNotice.classList.add('hidden');
             loadAndShowHiscores();
         }, 3500);
     }
@@ -338,25 +343,27 @@ document.addEventListener('DOMContentLoaded', () => {
             .then(res => res.json())
             .then(data => {
                 const scores = data.scores || [];
-                hiscoresTableBody.innerHTML = '';
-                if (scores.length === 0) {
-                    hiscoresTableBody.innerHTML = '<tr><td colspan="6">No hay partidas registradas aún.</td></tr>';
-                } else {
-                    scores.forEach((s, idx) => {
-                        const tr = document.createElement('tr');
-                        const totalScore = s.mode.includes('2') ? `P1: ${s.score_p1} | P2: ${s.score_p2}` : `${s.score_p1}`;
-                        tr.innerHTML = `
-                            <td><strong>#${idx + 1}</strong></td>
-                            <td>${s.mode}</td>
-                            <td>${s.duration}</td>
-                            <td class="table-score">${totalScore}</td>
-                            <td>${s.winner}</td>
-                            <td style="font-size:0.75rem;opacity:0.7;">${s.timestamp || '-'}</td>
-                        `;
-                        hiscoresTableBody.appendChild(tr);
-                    });
+                if (hiscoresTableBody) {
+                    hiscoresTableBody.innerHTML = '';
+                    if (scores.length === 0) {
+                        hiscoresTableBody.innerHTML = '<tr><td colspan="6">No hay partidas registradas aún.</td></tr>';
+                    } else {
+                        scores.forEach((s, idx) => {
+                            const tr = document.createElement('tr');
+                            const totalScore = s.mode.includes('2') ? `P1: ${s.score_p1} | P2: ${s.score_p2}` : `${s.score_p1}`;
+                            tr.innerHTML = `
+                                <td><strong>#${idx + 1}</strong></td>
+                                <td>${s.mode}</td>
+                                <td>${s.duration}</td>
+                                <td class="table-score">${totalScore}</td>
+                                <td>${s.winner}</td>
+                                <td style="font-size:0.75rem;opacity:0.7;">${s.timestamp || '-'}</td>
+                            `;
+                            hiscoresTableBody.appendChild(tr);
+                        });
+                    }
                 }
-                hiscoresModal.classList.remove('hidden');
+                if (hiscoresModal) hiscoresModal.classList.remove('hidden');
             });
     }
 
@@ -366,7 +373,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 if (gameTimerInterval) clearInterval(gameTimerInterval);
                 gameState = 'idle';
                 btnStartGame.textContent = '▶ INICIAR PARTIDA';
-                gameBigNotice.classList.add('hidden');
+                if (gameBigNotice) gameBigNotice.classList.add('hidden');
                 updateTimerDisplay(gameDurationSeconds);
             } else {
                 startGameCountdown();
@@ -379,12 +386,14 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     if (closeHiscoresBtn) {
-        closeHiscoresBtn.addEventListener('click', () => hiscoresModal.classList.add('hidden'));
+        closeHiscoresBtn.addEventListener('click', () => {
+            if (hiscoresModal) hiscoresModal.classList.add('hidden');
+        });
     }
 
     if (btnNewGameFromModal) {
         btnNewGameFromModal.addEventListener('click', () => {
-            hiscoresModal.classList.add('hidden');
+            if (hiscoresModal) hiscoresModal.classList.add('hidden');
             startGameCountdown();
         });
     }
@@ -403,35 +412,38 @@ document.addEventListener('DOMContentLoaded', () => {
         // Actualizar sliders del HUD
         if (engine.modeParams[modeName]) {
             const p = engine.modeParams[modeName];
-            if (vortexSlider) { vortexSlider.value = p.vortexRadius; vortexVal.textContent = `${p.vortexRadius}px`; }
-            if (windSlider) { windSlider.value = p.windStrength; windVal.textContent = `${p.windStrength.toFixed(1)}x`; }
-            if (speedSlider) { speedSlider.value = p.maxSpeed; speedVal.textContent = `${p.maxSpeed.toFixed(1)}`; }
-            if (frictionSlider) { frictionSlider.value = p.friction; frictionVal.textContent = `${p.friction.toFixed(2)}`; }
+            if (vortexSlider) { vortexSlider.value = p.vortexRadius; if (vortexVal) vortexVal.textContent = `${p.vortexRadius}px`; }
+            if (windSlider) { windSlider.value = p.windStrength; if (windVal) windVal.textContent = `${p.windStrength.toFixed(1)}x`; }
+            if (speedSlider) { speedSlider.value = p.maxSpeed; if (speedVal) speedVal.textContent = `${p.maxSpeed.toFixed(1)}`; }
+            if (frictionSlider) { frictionSlider.value = p.friction; if (frictionVal) frictionVal.textContent = `${p.friction.toFixed(2)}`; }
         }
 
         // Mostrar / Ocultar Paneles
         if (modeName === 'quadrant') {
-            quadrantPanel.classList.remove('hidden');
-            gameControlPanel.classList.add('hidden');
-            gameFloatingOverlay.classList.add('hidden');
+            if (quadrantPanel) quadrantPanel.classList.remove('hidden');
+            if (gameControlPanel) gameControlPanel.classList.add('hidden');
+            if (gameFloatingOverlay) gameFloatingOverlay.classList.add('hidden');
             showToast('MODO 2: TABLERO CUADRANTE ACCESIBLE');
         } else if (modeName === 'bubbles') {
-            quadrantPanel.classList.add('hidden');
-            gameControlPanel.classList.remove('hidden');
-            gameFloatingOverlay.classList.remove('hidden'); // Siempre visible en proyección
+            if (quadrantPanel) quadrantPanel.classList.add('hidden');
+            if (gameControlPanel) gameControlPanel.classList.remove('hidden');
+            if (gameFloatingOverlay) gameFloatingOverlay.classList.remove('hidden');
             engine.initBubbles();
             updateTimerDisplay(gameDurationSeconds);
             showToast('MODO 3: 🎮 JUEGO DE BURBUJAS');
         } else {
-            quadrantPanel.classList.add('hidden');
-            gameControlPanel.classList.add('hidden');
-            gameFloatingOverlay.classList.add('hidden');
-            showToast(`MODO: ${modeName.toUpperCase()}`);
+            if (quadrantPanel) quadrantPanel.classList.add('hidden');
+            if (gameControlPanel) gameControlPanel.classList.add('hidden');
+            if (gameFloatingOverlay) gameFloatingOverlay.classList.add('hidden');
+            showToast('MODO 1: SWARM / VÓRTICE');
         }
     }
 
     modeBtns.forEach(btn => {
-        btn.addEventListener('click', () => switchMode(btn.dataset.mode));
+        btn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            switchMode(btn.dataset.mode);
+        });
     });
 
     // Invertir B/W
@@ -447,7 +459,7 @@ document.addEventListener('DOMContentLoaded', () => {
     let hudVisible = true;
     function toggleHud() {
         hudVisible = !hudVisible;
-        hud.classList.toggle('hidden', !hudVisible);
+        if (hud) hud.classList.toggle('hidden', !hudVisible);
         showToast(hudVisible ? 'HUD VISIBLE' : 'HUD OCULTO (PROYECCIÓN LIMPIA)');
     }
 
@@ -462,7 +474,7 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
 
-    // Atajos de teclado
+    // Atajos de teclado (1, 2, 3)
     window.addEventListener('keydown', (e) => {
         const key = e.key.toLowerCase();
         if (key === '1') switchMode('swarm');
@@ -492,20 +504,24 @@ document.addEventListener('DOMContentLoaded', () => {
 
         // Puntero Player 1
         if (engine.cursor.active && (engine.mode === 'quadrant' || engine.mode === 'bubbles')) {
-            faceCursor.style.display = 'block';
-            faceCursor.style.left = `${cx}px`;
-            faceCursor.style.top = `${cy}px`;
+            if (faceCursor) {
+                faceCursor.style.display = 'block';
+                faceCursor.style.left = `${cx}px`;
+                faceCursor.style.top = `${cy}px`;
+            }
         } else {
-            faceCursor.style.display = 'none';
+            if (faceCursor) faceCursor.style.display = 'none';
         }
 
         // Puntero Player 2
         if (isMultiplayer && engine.cursorP2.active && engine.mode === 'bubbles') {
-            faceCursorP2.style.display = 'block';
-            faceCursorP2.style.left = `${engine.cursorP2.x}px`;
-            faceCursorP2.style.top = `${engine.cursorP2.y}px`;
+            if (faceCursorP2) {
+                faceCursorP2.style.display = 'block';
+                faceCursorP2.style.left = `${engine.cursorP2.x}px`;
+                faceCursorP2.style.top = `${engine.cursorP2.y}px`;
+            }
         } else {
-            faceCursorP2.style.display = 'none';
+            if (faceCursorP2) faceCursorP2.style.display = 'none';
         }
 
         if (engine.mode !== 'quadrant' || !engine.cursor.active) {
@@ -544,7 +560,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 setTimeout(() => hitTarget.classList.remove('selected'), 250);
 
                 const msg = hitTarget.dataset.msg;
-                if (msg) {
+                if (msg && quadrantOutput) {
                     quadrantOutput.textContent = `SELECCIONADO: "${msg}"`;
                     speakText(msg);
                 }
@@ -572,7 +588,7 @@ document.addEventListener('DOMContentLoaded', () => {
         evtSource = new EventSource('/stream_data');
 
         evtSource.onopen = () => {
-            statusDot.className = 'status-dot active';
+            if (statusDot) statusDot.className = 'status-dot active';
         };
 
         evtSource.onmessage = (event) => {
@@ -580,14 +596,17 @@ document.addEventListener('DOMContentLoaded', () => {
                 const data = JSON.parse(event.data);
                 engine.updateTracking(data);
 
-                if (data.fps !== undefined) fpsDisplay.textContent = data.fps;
-                if (data.faces) faceCountDisplay.textContent = data.faces.length;
+                if (data.fps !== undefined && fpsDisplay) fpsDisplay.textContent = data.fps;
+                if (data.inference_ms !== undefined && latencyDisplay) latencyDisplay.textContent = `${data.inference_ms}ms`;
+                if (data.faces && faceCountDisplay) faceCountDisplay.textContent = data.faces.length;
                 if (data.device && deviceBadge) deviceBadge.textContent = data.device.toUpperCase();
 
-                if (data.detected) {
-                    statusDot.className = 'status-dot tracking';
-                } else {
-                    statusDot.className = 'status-dot active';
+                if (statusDot) {
+                    if (data.detected) {
+                        statusDot.className = 'status-dot tracking';
+                    } else {
+                        statusDot.className = 'status-dot active';
+                    }
                 }
             } catch (err) {
                 console.error("Error parseando SSE:", err);
@@ -595,13 +614,16 @@ document.addEventListener('DOMContentLoaded', () => {
         };
 
         evtSource.onerror = () => {
-            statusDot.className = 'status-dot';
+            if (statusDot) statusDot.className = 'status-dot';
             evtSource.close();
             setTimeout(connectSSE, 2000);
         };
     }
 
     connectSSE();
+
+    // Iniciar con modo inicial
+    switchMode('swarm');
 
     // Loop de animación
     function animate() {

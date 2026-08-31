@@ -29,7 +29,6 @@ if torch.cuda.is_available():
     try:
         gpu_name = torch.cuda.get_device_name(0)
         print(f"Detectada GPU: {gpu_name}. Verificando compatibilidad de kernels CUDA...")
-        # Warmup de prueba para verificar si la GPU (e.g. sm_50) soporta los kernels
         dummy_img = np.zeros((320, 320, 3), dtype=np.uint8)
         _ = model(dummy_img, device="cuda", imgsz=320, verbose=False)
         device = "cuda"
@@ -56,10 +55,11 @@ is_running = True
 
 current_tracking_data = {
     "detected": False,
-    "faces": [],  # Lista de rostros detectados con sus keypoints normalizados
+    "faces": [],
     "primary_cursor": {"x": 0.5, "y": 0.5, "tilt": 0.0, "scale": 1.0, "mouth_open": False, "speed": 0.0},
     "secondary_cursor": {"x": 0.5, "y": 0.5, "tilt": 0.0, "scale": 1.0, "mouth_open": False, "speed": 0.0, "active": False},
     "fps": 0.0,
+    "inference_ms": 0.0,
     "timestamp": time.time(),
     "device": device
 }
@@ -70,11 +70,12 @@ prev_cursor_p2 = {"x": 0.5, "y": 0.5, "time": time.time()}
 # Parámetros de calibración y optimización
 config = {
     "camera_id": 0,
-    "flip_horizontal": True, # Modo espejo para interacción intuitiva
+    "flip_horizontal": True,
     "confidence_thresh": 0.35,
-    "smoothing": 0.45, # Factor de suavizado exponencial
-    "enable_gesture_reset": False, # Desactivado por defecto a petición
-    "inference_size": 320 if device == "cpu" else 384, # 320 en CPU para máximo rendimiento
+    "smoothing": 0.45,
+    "enable_gesture_reset": False,
+    "inference_size": 256 if device == "cpu" else 384, # 256 en CPU para máxima velocidad
+    "frame_skip": 1, # 1: procesa cada frame, 2: procesa 1 de cada 2 frames (duplica FPS)
 }
 
 def get_camera():
@@ -101,6 +102,9 @@ def tracking_worker():
     smooth_tilt_p2 = 0.0
     smooth_scale_p2 = 1.0
 
+    frame_counter = 0
+    last_results = None
+
     while is_running:
         try:
             if cap is None or not cap.isOpened():
@@ -110,18 +114,27 @@ def tracking_worker():
 
             success, frame = cap.read()
             if not success:
-                time.sleep(0.02)
+                time.sleep(0.01)
                 continue
 
             if config["flip_horizontal"]:
                 frame = cv2.flip(frame, 1)
 
-            h, w, _ = frame.shape
-            
-            # Inferencia optimizada con tamaño de imagen calibrable para acelerar en GPUs y CPUs modestas
+            frame_counter += 1
+            skip_rate = max(config.get("frame_skip", 1), 1)
+
+            t_infer_start = time.time()
             img_sz = config.get("inference_size", 384)
-            results = model(frame, imgsz=img_sz, conf=config["confidence_thresh"], verbose=False, device=device)
-            
+
+            # Ejecutar inferencia según tasa de frame skip
+            if frame_counter % skip_rate == 0 or last_results is None:
+                results = model(frame, imgsz=img_sz, conf=config["confidence_thresh"], verbose=False, device=device)
+                last_results = results
+            else:
+                results = last_results
+
+            infer_ms = round((time.time() - t_infer_start) * 1000, 1)
+
             now = time.time()
             dt = max(now - last_frame_time, 1e-4)
             last_frame_time = now
@@ -133,8 +146,7 @@ def tracking_worker():
             secondary = {"x": 0.5, "y": 0.5, "tilt": 0.0, "scale": 1.0, "mouth_open": False, "speed": 0.0, "active": False}
 
             if results and len(results) > 0 and results[0].keypoints is not None and len(results[0].keypoints) > 0:
-                keypoints_tensor = results[0].keypoints.xyn.cpu().numpy() # [N, 17, 2] normalizado
-                
+                keypoints_tensor = results[0].keypoints.xyn.cpu().numpy()
                 parsed_faces = []
 
                 for i, kpts in enumerate(keypoints_tensor):
@@ -146,7 +158,6 @@ def tracking_worker():
                     left_wrist = kpts[9] if len(kpts) > 9 else [0, 0]
                     right_wrist = kpts[10] if len(kpts) > 10 else [0, 0]
 
-                    # Gesto de juntar muñecas/manos (solo si está habilitado en config)
                     gesture_reset = False
                     if config.get("enable_gesture_reset", False):
                         if left_wrist[0] > 0 and left_wrist[1] > 0 and right_wrist[0] > 0 and right_wrist[1] > 0:
@@ -154,7 +165,6 @@ def tracking_worker():
                             if wrist_dist < 0.12:
                                 gesture_reset = True
 
-                    # Si la nariz tiene detección válida
                     if nose[0] > 0 and nose[1] > 0:
                         eye_dist = np.linalg.norm(left_eye - right_eye) if (left_eye[0] > 0 and right_eye[0] > 0) else 0.05
                         ear_dist = np.linalg.norm(left_ear - right_ear) if (left_ear[0] > 0 and right_ear[0] > 0) else eye_dist * 2.0
@@ -174,7 +184,6 @@ def tracking_worker():
                         else:
                             tilt = float(np.clip(raw_tilt, -1.2, 1.2))
 
-                        # Vectores de viento: Nariz -> Muñecas
                         MAX_VECTOR_LEN = 0.35
                         wind_vx = 0.0
                         wind_vy = 0.0
@@ -232,14 +241,12 @@ def tracking_worker():
                         }
                         parsed_faces.append(face_obj)
 
-                # Ordenar por escala (rostro más cercano primero) o posición X
                 if parsed_faces:
                     parsed_faces.sort(key=lambda f: f["scale"], reverse=True)
                     faces_list = parsed_faces
                     detected = True
                     alpha = config["smoothing"]
 
-                    # JUGADOR 1 (Rostro principal)
                     p1_face = parsed_faces[0]
                     target_x, target_y = p1_face["nose"]
                     smooth_x = smooth_x * alpha + target_x * (1.0 - alpha)
@@ -269,7 +276,6 @@ def tracking_worker():
                         "active": True
                     }
 
-                    # JUGADOR 2 (Segundo rostro si existe)
                     if len(parsed_faces) > 1:
                         p2_face = parsed_faces[1]
                         target_x_p2, target_y_p2 = p2_face["nose"]
@@ -299,11 +305,12 @@ def tracking_worker():
                     "primary_cursor": primary,
                     "secondary_cursor": secondary,
                     "fps": round(calc_fps, 1),
+                    "inference_ms": infer_ms,
                     "timestamp": now,
                     "device": device
                 }
 
-            time.sleep(0.005) # Yield ligero
+            time.sleep(0.002)
         except Exception as e:
             print(f"Error en worker de tracking: {e}")
             time.sleep(0.05)
@@ -324,7 +331,7 @@ def stream_data():
             with lock:
                 data_json = json.dumps(current_tracking_data)
             yield f"data: {data_json}\n\n"
-            time.sleep(0.016) # ~60 Hz de actualización al navegador
+            time.sleep(0.016)
     return Response(event_stream(), mimetype="text/event-stream")
 
 @app.route("/video_feed")
@@ -380,6 +387,8 @@ def update_config():
         config["enable_gesture_reset"] = bool(req["enable_gesture_reset"])
     if "inference_size" in req:
         config["inference_size"] = int(req["inference_size"])
+    if "frame_skip" in req:
+        config["frame_skip"] = int(req["frame_skip"])
     return jsonify({"status": "ok", "config": config})
 
 @app.route("/api/hiscores", methods=["GET", "POST"])

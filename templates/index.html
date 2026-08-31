@@ -99,6 +99,7 @@
             <div class="hud-actions">
                 <div class="hud-metrics">
                     <div>FPS: <strong id="fpsDisplay">0</strong></div>
+                    <div>Latencia: <strong id="latencyDisplay">0ms</strong></div>
                     <div>Rostros: <strong id="faceCountDisplay">0</strong></div>
                 </div>
 
@@ -120,13 +121,14 @@
         <div class="quick-tuning-panel">
             <div class="tuning-title">⚙️ CALIBRACIÓN & RENDIMIENTO</div>
             
-            <!-- Selector de Rendimiento / Tamaño de Inferencia (Turbo para notebooks) -->
+            <!-- Selector de Rendimiento con saltos notorios -->
             <div class="tuning-row">
-                <label>Calidad / Velocidad YOLO:</label>
+                <label>Perfil de Velocidad YOLO:</label>
                 <select id="inferenceSizeSelect" class="tuning-select">
-                    <option value="320">⚡ Turbo (320p - Ideal i7/840M)</option>
-                    <option value="384" selected>⚖️ Equilibrado (384p)</option>
-                    <option value="640">🎯 Alta Precisión (640p)</option>
+                    <option value="192">🚀 Ultra Rápido (192p + Skip - 40+ FPS)</option>
+                    <option value="256" selected>⚡ Turbo CPU (256p - Recomendado)</option>
+                    <option value="384">⚖️ Equilibrado (384p)</option>
+                    <option value="640">🎯 Alta Precisión (640p - Pesado)</option>
                 </select>
             </div>
 
