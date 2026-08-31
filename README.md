@@ -1,7 +1,3 @@
-<<<<<<< HEAD
-# feria_de_ciencias
-repo para guardar las aplicaciones que vamos a usar en la feria de ciencisa en la plaza de San Martin
-=======
 # 📽️ Proyección Interactiva con YOLO Pose & Sistema de Partículas
 
 Aplicación visual interactiva en tiempo real diseñada para charlas, stands de ferias, instalaciones interactivas y demostraciones de **Visión Computacional Aplicada**.
