@@ -23,16 +23,22 @@ if not os.path.exists(MODEL_PATH):
 print(f"Cargando modelo YOLO Pose desde: {MODEL_PATH}")
 model = YOLO(MODEL_PATH)
 
-# Detección automática de CUDA (GeForce 840M u otra GPU)
-device = "cuda" if torch.cuda.is_available() else "cpu"
-print(f"Dispositivo de inferencia seleccionado: {device.upper()}")
-if device == "cuda":
+# Detección y verificación REAL de CUDA con warmup
+device = "cpu"
+if torch.cuda.is_available():
     try:
-        model.to("cuda")
-        print(f"GPU detectada: {torch.cuda.get_device_name(0)}")
+        gpu_name = torch.cuda.get_device_name(0)
+        print(f"Detectada GPU: {gpu_name}. Verificando compatibilidad de kernels CUDA...")
+        # Warmup de prueba para verificar si la GPU (e.g. sm_50) soporta los kernels
+        dummy_img = np.zeros((320, 320, 3), dtype=np.uint8)
+        _ = model(dummy_img, device="cuda", imgsz=320, verbose=False)
+        device = "cuda"
+        print(f"✅ Aceleración CUDA activada correctamente en {gpu_name}!")
     except Exception as e:
-        print(f"No se pudo mover modelo a CUDA, usando CPU: {e}")
+        print(f"⚠️ GPU detectada pero no compatible con estos kernels CUDA ({e}). Usando CPU optimizada.")
         device = "cpu"
+else:
+    print("CUDA no disponible en el sistema. Usando CPU.")
 
 # Ruta para archivo de High Scores local
 HISCORES_FILE = os.path.join(os.path.dirname(__file__), "hiscores.json")
@@ -54,7 +60,8 @@ current_tracking_data = {
     "primary_cursor": {"x": 0.5, "y": 0.5, "tilt": 0.0, "scale": 1.0, "mouth_open": False, "speed": 0.0},
     "secondary_cursor": {"x": 0.5, "y": 0.5, "tilt": 0.0, "scale": 1.0, "mouth_open": False, "speed": 0.0, "active": False},
     "fps": 0.0,
-    "timestamp": time.time()
+    "timestamp": time.time(),
+    "device": device
 }
 
 prev_cursor = {"x": 0.5, "y": 0.5, "time": time.time()}
@@ -67,7 +74,7 @@ config = {
     "confidence_thresh": 0.35,
     "smoothing": 0.45, # Factor de suavizado exponencial
     "enable_gesture_reset": False, # Desactivado por defecto a petición
-    "inference_size": 384, # 320 (Turbo), 384 (Óptimo para 840M/i7), 640 (Alta precisión)
+    "inference_size": 320 if device == "cpu" else 384, # 320 en CPU para máximo rendimiento
 }
 
 def get_camera():
@@ -339,14 +346,12 @@ def video_feed():
             with lock:
                 curr = current_tracking_data
                 if curr["detected"]:
-                    # P1 Indicator (Verde)
                     if curr["primary_cursor"].get("active", False):
                         cx = int(curr["primary_cursor"]["x"] * frame.shape[1])
                         cy = int(curr["primary_cursor"]["y"] * frame.shape[0])
                         cv2.circle(frame, (cx, cy), 7, (0, 255, 136), 2)
                         cv2.putText(frame, "P1", (cx + 10, cy - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 136), 2)
 
-                    # P2 Indicator (Naranja)
                     if curr["secondary_cursor"].get("active", False):
                         cx2 = int(curr["secondary_cursor"]["x"] * frame.shape[1])
                         cy2 = int(curr["secondary_cursor"]["y"] * frame.shape[0])
@@ -358,7 +363,7 @@ def video_feed():
                 continue
             yield (b'--frame\r\n'
                    b'Content-Type: image/jpeg\r\n\r\n' + buffer.tobytes() + b'\r\n')
-            time.sleep(0.05) # ~20 fps para miniatura
+            time.sleep(0.05)
     return Response(gen(), mimetype='multipart/x-mixed-replace; boundary=frame')
 
 @app.route("/config", methods=["POST"])
@@ -389,9 +394,8 @@ def hiscores():
                 with open(HISCORES_FILE, "r", encoding="utf-8") as f:
                     scores = json.load(f)
             scores.append(record)
-            # Ordenar por puntaje total descendente
             scores.sort(key=lambda s: s.get("score_p1", 0) + s.get("score_p2", 0), reverse=True)
-            scores = scores[:50] # Guardar top 50
+            scores = scores[:50]
             with open(HISCORES_FILE, "w", encoding="utf-8") as f:
                 json.dump(scores, f, indent=2)
             return jsonify({"status": "ok", "scores": scores})
