@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Proyección Interactiva | YOLO Pose Particles</title>
+    <link rel="stylesheet" href="/static/css/styles.css">
+</head>
+<body>
+    <!-- Canvas de Renderizado de Partículas -->
+    <canvas id="projectionCanvas"></canvas>
+
+    <!-- Cursor Facial Overlay (Puntero Láser / Guía de Cabeza) -->
+    <div id="faceCursorIndicator">
+        <div class="cross-h"></div>
+    </div>
+
+    <!-- Notificación Toast -->
+    <div id="toastMsg" class="toast-msg">MODO: SWARM</div>
+
+    <!-- HUD de Control & Métricas (Ocultable con [H]) -->
+    <div id="hudContainer">
+        <header class="hud-header">
+            <div class="hud-title">
+                <div id="statusDot" class="status-dot"></div>
+                <span>YOLO26-POSE INTERACTIVE PROJECTION</span>
+            </div>
+            <div class="hud-metrics">
+                <div>FPS: <strong id="fpsDisplay">0</strong></div>
+                <div>Rostros: <strong id="faceCountDisplay">0</strong></div>
+            </div>
+        </header>
+
+        <!-- Selector de Modos -->
+        <nav class="mode-selector">
+            <button class="mode-btn active" data-mode="swarm"><span class="key">1</span> Swarm / Vórtice</button>
+            <button class="mode-btn" data-mode="quadrant"><span class="key">2</span> Cuadrante Accesible (AAC)</button>
+            <button class="mode-btn" data-mode="bubbles"><span class="key">3</span> 🎮 Juego: Burbujas</button>
+        </nav>
+
+        <!-- Panel de Calibración Rápida en Vivo -->
+        <div class="quick-tuning-panel">
+            <div class="tuning-title">⚙️ CALIBRACIÓN EN VIVO</div>
+            <div class="tuning-row">
+                <label>Radio Vórtice: <span id="vortexVal">155px</span></label>
+                <input type="range" id="vortexRadiusSlider" min="50" max="300" value="155" step="5">
+            </div>
+            <div class="tuning-row">
+                <label>Fuerza Viento: <span id="windVal">1.5x</span></label>
+                <input type="range" id="windStrengthSlider" min="0.2" max="3.0" value="1.5" step="0.1">
+            </div>
+            <div class="tuning-row">
+                <label>Velocidad Máx: <span id="speedVal">8.0</span></label>
+                <input type="range" id="maxSpeedSlider" min="3.0" max="20.0" value="8.0" step="0.5">
+            </div>
+            <div class="tuning-row">
+                <label>Fricción / Freno: <span id="frictionVal">0.88</span></label>
+                <input type="range" id="frictionSlider" min="0.80" max="0.98" value="0.88" step="0.01">
+            </div>
+        </div>
+
+        <!-- MODO 3: Tablero Cuadrante Accesible (Grandes Zonas de Comunicación Rápida) -->
+        <div id="quadrantPanel" class="quadrant-board-container hidden">
+            <div class="quadrant-card top-left" data-msg="HOLA, BUENOS DÍAS">
+                <div class="quad-icon">👋</div>
+                <div class="quad-title">HOLA</div>
+                <div class="quad-desc">Saludo cordial</div>
+                <div class="dwell-fill"></div>
+            </div>
+            <div class="quadrant-card top-right" data-msg="MUCHAS GRACIAS">
+                <div class="quad-icon">🙏</div>
+                <div class="quad-title">GRACIAS</div>
+                <div class="quad-desc">Agradecimiento</div>
+                <div class="dwell-fill"></div>
+            </div>
+            <div class="quadrant-center-bar">
+                <div class="quad-center-btn yes-btn" data-msg="SÍ">
+                    <span>✅ SÍ</span>
+                    <div class="dwell-fill"></div>
+                </div>
+                <div class="quad-center-status">
+                    <span id="quadrantOutput">MUEVE LA CABEZA A UN CUADRANTE</span>
+                </div>
+                <div class="quad-center-btn no-btn" data-msg="NO">
+                    <span>❌ NO</span>
+                    <div class="dwell-fill"></div>
+                </div>
+            </div>
+            <div class="quadrant-card bottom-left" data-msg="NECESITO AGUA POR FAVOR">
+                <div class="quad-icon">💧</div>
+                <div class="quad-title">AGUA</div>
+                <div class="quad-desc">Hidratación</div>
+                <div class="dwell-fill"></div>
+            </div>
+            <div class="quadrant-card bottom-right" data-msg="NECESITO AYUDA POR FAVOR">
+                <div class="quad-icon">🆘</div>
+                <div class="quad-title">AYUDA</div>
+                <div class="quad-desc">Asistencia</div>
+                <div class="dwell-fill"></div>
+            </div>
+        </div>
+
+        <!-- MODO 4: Juego Interactivo de Reventar Burbujas con la Cabeza -->
+        <div id="gameHudPanel" class="game-hud-container hidden">
+            <div class="game-score-badge">
+                <span>BURBUJAS REVENTADAS:</span>
+                <strong id="gameScore">0</strong>
+            </div>
+            <div class="game-tip">🎯 ¡Toca las burbujas flotantes con tu nariz para reventarlas!</div>
+        </div>
+
+        <!-- Pie de página con atajos y miniatura de calibración -->
+        <footer class="hud-footer">
+            <div class="shortcuts-guide">
+                <span><kbd>F</kbd> Pantalla Completa</span>
+                <span><kbd>H</kbd> Ocultar HUD</span>
+                <span><kbd>I</kbd> Invertir B/W</span>
+                <span><kbd>R</kbd> Reiniciar</span>
+                <span><kbd>1-4</kbd> Modos</span>
+                <span class="gesture-badge"><kbd>🙌 Juntar Manos</kbd> Auto Reset</span>
+            </div>
+
+            <div class="cam-preview-box">
+                <img src="/video_feed" alt="Camera Stream">
+                <span class="cam-label">CALIBRACIÓN CÁMARA</span>
+            </div>
+        </footer>
+    </div>
+
+    <!-- Scripts -->
+    <script src="/static/js/particles.js"></script>
+    <script src="/static/js/app.js"></script>
+</body>
+</html>
