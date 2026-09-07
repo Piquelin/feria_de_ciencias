@@ -59,6 +59,12 @@ document.addEventListener('DOMContentLoaded', () => {
     const frictionSlider = document.getElementById('frictionSlider');
     const frictionVal = document.getElementById('frictionVal');
 
+    const smoothingSlider = document.getElementById('smoothingSlider');
+    const smoothingVal = document.getElementById('smoothingVal');
+    const confidenceSlider = document.getElementById('confidenceSlider');
+    const confVal = document.getElementById('confVal');
+    const btnResetTracking = document.getElementById('btnResetTracking');
+
     // Instanciar motor de partículas
     const engine = new ParticleEngine(canvas);
     window.addEventListener('resize', () => engine.resize());
@@ -141,6 +147,58 @@ document.addEventListener('DOMContentLoaded', () => {
             }).then(() => {
                 showToast(enabled ? 'GESTO RESET: ACTIVADO' : 'GESTO RESET: DESACTIVADO');
             });
+        });
+    }
+
+    // Calibración de Suavizado 1€ (One Euro Filter)
+    const smoothingPresets = {
+        1: { label: 'Ultra Rápido', minCutoff: 2.5, beta: 0.020 },
+        2: { label: 'Reactivo', minCutoff: 1.8, beta: 0.012 },
+        3: { label: 'Equilibrado', minCutoff: 1.2, beta: 0.008 },
+        4: { label: 'Estable', minCutoff: 0.8, beta: 0.005 },
+        5: { label: 'Ultra Estable (AAC)', minCutoff: 0.5, beta: 0.002 }
+    };
+
+    if (smoothingSlider) {
+        smoothingSlider.addEventListener('input', (e) => {
+            const level = parseInt(e.target.value);
+            const preset = smoothingPresets[level] || smoothingPresets[3];
+            engine.setSmoothingParams(preset.minCutoff, preset.beta);
+            if (smoothingVal) smoothingVal.textContent = preset.label;
+            showToast(`PUNTERO (1€): ${preset.label.toUpperCase()}`);
+        });
+    }
+
+    // Slider de Umbral de Confianza YOLO
+    if (confidenceSlider) {
+        confidenceSlider.addEventListener('change', (e) => {
+            const conf = parseFloat(e.target.value) / 100.0;
+            if (confVal) confVal.textContent = `${e.target.value}%`;
+            fetch('/config', {
+                method: 'POST',
+                body: JSON.stringify({ confidence_thresh: conf })
+            }).then(() => {
+                showToast(`CONFIANZA YOLO: ${e.target.value}%`);
+            });
+        });
+        confidenceSlider.addEventListener('input', (e) => {
+            if (confVal) confVal.textContent = `${e.target.value}%`;
+        });
+    }
+
+    // Botón de Reasignación Manual de Identidades (Reset Tracking)
+    if (btnResetTracking) {
+        btnResetTracking.addEventListener('click', (e) => {
+            e.stopPropagation();
+            fetch('/reset_tracking', { method: 'POST' })
+                .then(res => res.json())
+                .then(() => {
+                    engine.initParticles();
+                    showToast('🔄 TRACKING REINICIADO (REASIGNANDO JUGADORES)');
+                })
+                .catch(() => {
+                    showToast('Tracking reiniciado.');
+                });
         });
     }
 

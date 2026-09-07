@@ -1,4 +1,69 @@
 /**
+ * OneEuroFilter - Filtro pasabajos adaptativo basado en velocidad (Casiez et al., CHI 2012).
+ * Suaviza agresivamente a baja velocidad para eliminar micro-jitter y reduce el retardo a cero
+ * a alta velocidad para un seguimiento instantáneo y reactivo.
+ */
+class OneEuroFilter {
+    constructor(minCutoff = 1.2, beta = 0.008, dCutoff = 1.0) {
+        this.minCutoff = minCutoff; // Frecuencia de corte mínima (Hz) para reposo
+        this.beta = beta;           // Coeficiente de velocidad para dinámicas rápidas
+        this.dCutoff = dCutoff;     // Frecuencia de corte para la derivada
+        this.xPrev = null;
+        this.dxPrev = 0;
+        this.tPrev = null;
+    }
+
+    alpha(cutoff, dt) {
+        const tau = 1.0 / (2.0 * Math.PI * cutoff);
+        return 1.0 / (1.0 + tau / dt);
+    }
+
+    filter(x, t) {
+        if (this.xPrev === null || this.tPrev === null) {
+            this.xPrev = x;
+            this.tPrev = t;
+            this.dxPrev = 0;
+            return x;
+        }
+
+        let dt = (t - this.tPrev) / 1000.0;
+        if (dt <= 0.0) {
+            dt = 0.016;
+        }
+        if (dt > 0.4) {
+            this.reset();
+            this.xPrev = x;
+            this.tPrev = t;
+            return x;
+        }
+
+        // 1. Filtrar derivada (velocidad)
+        const dx = (x - this.xPrev) / dt;
+        const aD = this.alpha(this.dCutoff, dt);
+        const dxHat = aD * dx + (1.0 - aD) * this.dxPrev;
+
+        // 2. Frecuencia de corte adaptativa
+        const cutoff = this.minCutoff + this.beta * Math.abs(dxHat);
+
+        // 3. Filtrar señal
+        const a = this.alpha(cutoff, dt);
+        const xHat = a * x + (1.0 - a) * this.xPrev;
+
+        this.xPrev = xHat;
+        this.dxPrev = dxHat;
+        this.tPrev = t;
+
+        return xHat;
+    }
+
+    reset() {
+        this.xPrev = null;
+        this.dxPrev = 0;
+        this.tPrev = null;
+    }
+}
+
+/**
  * ParticleEngine - Motor de partículas físico optimizado para proyección interactiva B&W
  * Soporta Modo 1P y 2P, optimización de rendimiento para notebooks y renderizado adaptativo.
  */
@@ -15,6 +80,12 @@ class ParticleEngine {
         this.width = window.innerWidth;
         this.height = window.innerHeight;
         this.resize();
+
+        // Filtros One Euro Filter para P1 y P2 (elimina lag y jitter)
+        this.filterP1X = new OneEuroFilter(1.2, 0.008);
+        this.filterP1Y = new OneEuroFilter(1.2, 0.008);
+        this.filterP2X = new OneEuroFilter(1.2, 0.008);
+        this.filterP2Y = new OneEuroFilter(1.2, 0.008);
 
         // Parámetros calibrados por modo
         this.modeParams = {
@@ -132,6 +203,19 @@ class ParticleEngine {
         };
     }
 
+    setSmoothingParams(minCutoff, beta) {
+        if (this.filterP1X) {
+            this.filterP1X.minCutoff = minCutoff;
+            this.filterP1X.beta = beta;
+            this.filterP1Y.minCutoff = minCutoff;
+            this.filterP1Y.beta = beta;
+            this.filterP2X.minCutoff = minCutoff;
+            this.filterP2X.beta = beta;
+            this.filterP2Y.minCutoff = minCutoff;
+            this.filterP2Y.beta = beta;
+        }
+    }
+
     updateTracking(data) {
         if (!data) return;
         this.faces = data.faces || [];
@@ -148,6 +232,14 @@ class ParticleEngine {
             this.cursor.windVy = pc.wind_vy || 0.0;
             this.cursor.windMag = pc.wind_magnitude || 0.0;
             this.cursor.handsActive = pc.hands_active || 0;
+
+            // Si el cursor acaba de activarse, resetear filtro para responder de inmediato
+            if (!this.cursor.active) {
+                this.filterP1X.reset();
+                this.filterP1Y.reset();
+                this.cursor.x = this.cursor.targetX;
+                this.cursor.y = this.cursor.targetY;
+            }
             this.cursor.active = true;
 
             if (pc.gesture_reset && !this.lastResetGesture) {
@@ -158,6 +250,10 @@ class ParticleEngine {
             }
             this.lastResetGesture = !!pc.gesture_reset;
         } else {
+            if (this.cursor.active) {
+                this.filterP1X.reset();
+                this.filterP1Y.reset();
+            }
             this.cursor.active = false;
             this.lastResetGesture = false;
         }
@@ -170,22 +266,36 @@ class ParticleEngine {
             this.cursorP2.tilt = sc.tilt;
             this.cursorP2.scale = sc.scale;
             this.cursorP2.speed = sc.speed;
+
+            if (!this.cursorP2.active) {
+                this.filterP2X.reset();
+                this.filterP2Y.reset();
+                this.cursorP2.x = this.cursorP2.targetX;
+                this.cursorP2.y = this.cursorP2.targetY;
+            }
             this.cursorP2.active = true;
         } else {
+            if (this.cursorP2.active) {
+                this.filterP2X.reset();
+                this.filterP2Y.reset();
+            }
             this.cursorP2.active = false;
         }
     }
 
     update() {
-        const lerpFactor = 0.35;
-        // Suavizado P1
-        this.cursor.x += (this.cursor.targetX - this.cursor.x) * lerpFactor;
-        this.cursor.y += (this.cursor.targetY - this.cursor.y) * lerpFactor;
+        const now = performance.now();
 
-        // Suavizado P2
+        // Suavizado adaptativo One Euro Filter para P1 (cero jitter en reposo, cero lag en movimiento rápido)
+        if (this.cursor.active) {
+            this.cursor.x = this.filterP1X.filter(this.cursor.targetX, now);
+            this.cursor.y = this.filterP1Y.filter(this.cursor.targetY, now);
+        }
+
+        // Suavizado adaptativo One Euro Filter para P2
         if (this.cursorP2.active) {
-            this.cursorP2.x += (this.cursorP2.targetX - this.cursorP2.x) * lerpFactor;
-            this.cursorP2.y += (this.cursorP2.targetY - this.cursorP2.y) * lerpFactor;
+            this.cursorP2.x = this.filterP2X.filter(this.cursorP2.targetX, now);
+            this.cursorP2.y = this.filterP2Y.filter(this.cursorP2.targetY, now);
         }
 
         const cx = this.cursor.x;

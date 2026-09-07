@@ -52,6 +52,15 @@ if not os.path.exists(HISCORES_FILE):
 lock = threading.Lock()
 camera = None
 is_running = True
+latest_preview_frame = None
+
+# Estado de persistencia espacial para P1 y P2 (evita saltos entre personas)
+MAX_MATCH_DIST = 0.28   # Radio de búsqueda normalizado
+MAX_LOST_FRAMES = 10    # Ventana de tolerancia temporal (~350-400ms a 25-30 FPS)
+tracker_state = {
+    "p1": {"active": False, "pos": None, "scale": 1.0, "lost_frames": 0},
+    "p2": {"active": False, "pos": None, "scale": 1.0, "lost_frames": 0}
+}
 
 current_tracking_data = {
     "detected": False,
@@ -72,7 +81,7 @@ config = {
     "camera_id": 0,
     "flip_horizontal": True,
     "confidence_thresh": 0.35,
-    "smoothing": 0.45,
+    "smoothing": 0.0, # 0.0 por defecto: bypass en backend para eliminar lag; el suavizado adaptativo lo hace 1€ Filter en JS
     "enable_gesture_reset": False,
     "inference_size": 256 if device == "cpu" else 384, # 256 en CPU para máxima velocidad
     "frame_skip": 1, # 1: procesa cada frame, 2: procesa 1 de cada 2 frames (duplica FPS)
@@ -82,6 +91,7 @@ def get_camera():
     global camera
     if camera is None or not camera.isOpened():
         camera = cv2.VideoCapture(config["camera_id"], cv2.CAP_DSHOW if os.name == 'nt' else cv2.CAP_ANY)
+        camera.set(cv2.CAP_PROP_BUFFERSIZE, 1) # Evita acumular frames viejos en buffer del driver
         camera.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
         camera.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
         camera.set(cv2.CAP_PROP_FPS, 30)
@@ -119,6 +129,9 @@ def tracking_worker():
 
             if config["flip_horizontal"]:
                 frame = cv2.flip(frame, 1)
+
+            with lock:
+                latest_preview_frame = frame.copy()
 
             frame_counter += 1
             skip_rate = max(config.get("frame_skip", 1), 1)
@@ -241,18 +254,113 @@ def tracking_worker():
                         }
                         parsed_faces.append(face_obj)
 
-                if parsed_faces:
-                    parsed_faces.sort(key=lambda f: f["scale"], reverse=True)
-                    faces_list = parsed_faces
-                    detected = True
-                    alpha = config["smoothing"]
+                matched_p1_face = None
+                matched_p2_face = None
 
-                    p1_face = parsed_faces[0]
-                    target_x, target_y = p1_face["nose"]
-                    smooth_x = smooth_x * alpha + target_x * (1.0 - alpha)
-                    smooth_y = smooth_y * alpha + target_y * (1.0 - alpha)
-                    smooth_tilt = smooth_tilt * alpha + p1_face["tilt"] * (1.0 - alpha)
-                    smooth_scale = smooth_scale * alpha + p1_face["scale"] * (1.0 - alpha)
+                if parsed_faces:
+                    faces_list = parsed_faces
+
+                    # Si el usuario hace el gesto de puños / manos juntas, resetear tracking
+                    if any(f.get("gesture_reset", False) for f in parsed_faces):
+                        tracker_state["p1"]["active"] = False
+                        tracker_state["p1"]["pos"] = None
+                        tracker_state["p2"]["active"] = False
+                        tracker_state["p2"]["pos"] = None
+
+                    # 1. Matching por proximidad espacial para tracks activos (Nearest Neighbor)
+                    active_tracks = []
+                    if tracker_state["p1"]["active"] and tracker_state["p1"]["pos"] is not None:
+                        active_tracks.append("p1")
+                    if tracker_state["p2"]["active"] and tracker_state["p2"]["pos"] is not None:
+                        active_tracks.append("p2")
+
+                    candidate_pairs = []
+                    for t_id in active_tracks:
+                        t_pos = tracker_state[t_id]["pos"]
+                        for f_idx, face in enumerate(parsed_faces):
+                            f_pos = face["nose"]
+                            dist = float(np.hypot(f_pos[0] - t_pos[0], f_pos[1] - t_pos[1]))
+                            if dist <= MAX_MATCH_DIST:
+                                candidate_pairs.append((dist, t_id, f_idx))
+
+                    candidate_pairs.sort(key=lambda x: x[0])
+                    assigned_tracks = set()
+                    assigned_faces = set()
+
+                    for dist, t_id, f_idx in candidate_pairs:
+                        if t_id not in assigned_tracks and f_idx not in assigned_faces:
+                            assigned_tracks.add(t_id)
+                            assigned_faces.add(f_idx)
+                            face = parsed_faces[f_idx]
+                            tracker_state[t_id]["pos"] = face["nose"]
+                            tracker_state[t_id]["scale"] = face["scale"]
+                            tracker_state[t_id]["lost_frames"] = 0
+                            tracker_state[t_id]["active"] = True
+                            if t_id == "p1":
+                                matched_p1_face = face
+                            else:
+                                matched_p2_face = face
+
+                    # Manejo de tolerancia a pérdidas momentáneas para tracks no emparejados
+                    for t_id in ["p1", "p2"]:
+                        if tracker_state[t_id]["active"] and t_id not in assigned_tracks:
+                            tracker_state[t_id]["lost_frames"] += 1
+                            if tracker_state[t_id]["lost_frames"] > MAX_LOST_FRAMES:
+                                tracker_state[t_id]["active"] = False
+                                tracker_state[t_id]["pos"] = None
+
+                    # Rostros no asignados por proximidad
+                    unassigned_faces = [f for i, f in enumerate(parsed_faces) if i not in assigned_faces]
+                    unassigned_faces.sort(key=lambda f: f["scale"], reverse=True)
+
+                    # Promover P2 a P1 si P1 se fue y P2 sigue presente
+                    if not tracker_state["p1"]["active"] and tracker_state["p2"]["active"] and matched_p2_face is not None and not unassigned_faces:
+                        tracker_state["p1"] = tracker_state["p2"].copy()
+                        matched_p1_face = matched_p2_face
+                        tracker_state["p2"]["active"] = False
+                        tracker_state["p2"]["pos"] = None
+                        matched_p2_face = None
+
+                    # Si P1 no está activo y hay rostros disponibles, asignar el más grande a P1
+                    if not tracker_state["p1"]["active"] and unassigned_faces:
+                        p1_new_face = unassigned_faces.pop(0)
+                        tracker_state["p1"]["active"] = True
+                        tracker_state["p1"]["pos"] = p1_new_face["nose"]
+                        tracker_state["p1"]["scale"] = p1_new_face["scale"]
+                        tracker_state["p1"]["lost_frames"] = 0
+                        matched_p1_face = p1_new_face
+
+                    # Si P2 no está activo y quedan rostros disponibles, asignar a P2
+                    if not tracker_state["p2"]["active"] and unassigned_faces:
+                        p2_new_face = unassigned_faces.pop(0)
+                        tracker_state["p2"]["active"] = True
+                        tracker_state["p2"]["pos"] = p2_new_face["nose"]
+                        tracker_state["p2"]["scale"] = p2_new_face["scale"]
+                        tracker_state["p2"]["lost_frames"] = 0
+                        matched_p2_face = p2_new_face
+                else:
+                    for t_id in ["p1", "p2"]:
+                        if tracker_state[t_id]["active"]:
+                            tracker_state[t_id]["lost_frames"] += 1
+                            if tracker_state[t_id]["lost_frames"] > MAX_LOST_FRAMES:
+                                tracker_state[t_id]["active"] = False
+                                tracker_state[t_id]["pos"] = None
+
+                alpha = config.get("smoothing", 0.0)
+
+                # Construir cursor P1
+                if matched_p1_face is not None:
+                    detected = True
+                    target_x, target_y = matched_p1_face["nose"]
+                    if alpha > 0.0:
+                        smooth_x = smooth_x * alpha + target_x * (1.0 - alpha)
+                        smooth_y = smooth_y * alpha + target_y * (1.0 - alpha)
+                        smooth_tilt = smooth_tilt * alpha + matched_p1_face["tilt"] * (1.0 - alpha)
+                        smooth_scale = smooth_scale * alpha + matched_p1_face["scale"] * (1.0 - alpha)
+                    else:
+                        smooth_x, smooth_y = target_x, target_y
+                        smooth_tilt = matched_p1_face["tilt"]
+                        smooth_scale = matched_p1_face["scale"]
 
                     dx = smooth_x - prev_cursor["x"]
                     dy = smooth_y - prev_cursor["y"]
@@ -265,38 +373,44 @@ def tracking_worker():
                         "tilt": float(smooth_tilt),
                         "scale": float(smooth_scale),
                         "speed": float(cursor_speed),
-                        "gesture_reset": bool(p1_face.get("gesture_reset", False)),
-                        "wind_vx": float(p1_face["wind_vx"]),
-                        "wind_vy": float(p1_face["wind_vy"]),
-                        "wind_magnitude": float(p1_face["wind_magnitude"]),
-                        "wind_angle": float(p1_face["wind_angle"]),
-                        "hands_active": int(p1_face["hands_active"]),
-                        "left_wrist": p1_face["left_wrist"],
-                        "right_wrist": p1_face["right_wrist"],
+                        "gesture_reset": bool(matched_p1_face.get("gesture_reset", False)),
+                        "wind_vx": float(matched_p1_face["wind_vx"]),
+                        "wind_vy": float(matched_p1_face["wind_vy"]),
+                        "wind_magnitude": float(matched_p1_face["wind_magnitude"]),
+                        "wind_angle": float(matched_p1_face["wind_angle"]),
+                        "hands_active": int(matched_p1_face["hands_active"]),
+                        "left_wrist": matched_p1_face["left_wrist"],
+                        "right_wrist": matched_p1_face["right_wrist"],
                         "active": True
                     }
 
-                    if len(parsed_faces) > 1:
-                        p2_face = parsed_faces[1]
-                        target_x_p2, target_y_p2 = p2_face["nose"]
+                # Construir cursor P2
+                if matched_p2_face is not None:
+                    detected = True
+                    target_x_p2, target_y_p2 = matched_p2_face["nose"]
+                    if alpha > 0.0:
                         smooth_x_p2 = smooth_x_p2 * alpha + target_x_p2 * (1.0 - alpha)
                         smooth_y_p2 = smooth_y_p2 * alpha + target_y_p2 * (1.0 - alpha)
-                        smooth_tilt_p2 = smooth_tilt_p2 * alpha + p2_face["tilt"] * (1.0 - alpha)
-                        smooth_scale_p2 = smooth_scale_p2 * alpha + p2_face["scale"] * (1.0 - alpha)
+                        smooth_tilt_p2 = smooth_tilt_p2 * alpha + matched_p2_face["tilt"] * (1.0 - alpha)
+                        smooth_scale_p2 = smooth_scale_p2 * alpha + matched_p2_face["scale"] * (1.0 - alpha)
+                    else:
+                        smooth_x_p2, smooth_y_p2 = target_x_p2, target_y_p2
+                        smooth_tilt_p2 = matched_p2_face["tilt"]
+                        smooth_scale_p2 = matched_p2_face["scale"]
 
-                        dx2 = smooth_x_p2 - prev_cursor_p2["x"]
-                        dy2 = smooth_y_p2 - prev_cursor_p2["y"]
-                        cursor_speed_p2 = np.sqrt(dx2*dx2 + dy2*dy2) / dt
-                        prev_cursor_p2 = {"x": smooth_x_p2, "y": smooth_y_p2, "time": now}
+                    dx2 = smooth_x_p2 - prev_cursor_p2["x"]
+                    dy2 = smooth_y_p2 - prev_cursor_p2["y"]
+                    cursor_speed_p2 = np.sqrt(dx2*dx2 + dy2*dy2) / dt
+                    prev_cursor_p2 = {"x": smooth_x_p2, "y": smooth_y_p2, "time": now}
 
-                        secondary = {
-                            "x": float(smooth_x_p2),
-                            "y": float(smooth_y_p2),
-                            "tilt": float(smooth_tilt_p2),
-                            "scale": float(smooth_scale_p2),
-                            "speed": float(cursor_speed_p2),
-                            "active": True
-                        }
+                    secondary = {
+                        "x": float(smooth_x_p2),
+                        "y": float(smooth_y_p2),
+                        "tilt": float(smooth_tilt_p2),
+                        "scale": float(smooth_scale_p2),
+                        "speed": float(cursor_speed_p2),
+                        "active": True
+                    }
 
             with lock:
                 current_tracking_data = {
@@ -336,34 +450,32 @@ def stream_data():
 
 @app.route("/video_feed")
 def video_feed():
-    """Feed de video opcional en miniatura para calibración y alineación en vivo."""
+    """Feed de video opcional en miniatura para calibración y alineación en vivo (desacoplado sin cap.read concurrentes)."""
     def gen():
-        cap = get_camera()
         while is_running:
-            if cap is None or not cap.isOpened():
-                time.sleep(0.1)
-                continue
-            success, frame = cap.read()
-            if not success:
-                time.sleep(0.03)
-                continue
-            if config["flip_horizontal"]:
-                frame = cv2.flip(frame, 1)
-            
             with lock:
+                if latest_preview_frame is None:
+                    frame = None
+                else:
+                    frame = latest_preview_frame.copy()
                 curr = current_tracking_data
-                if curr["detected"]:
-                    if curr["primary_cursor"].get("active", False):
-                        cx = int(curr["primary_cursor"]["x"] * frame.shape[1])
-                        cy = int(curr["primary_cursor"]["y"] * frame.shape[0])
-                        cv2.circle(frame, (cx, cy), 7, (0, 255, 136), 2)
-                        cv2.putText(frame, "P1", (cx + 10, cy - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 136), 2)
+            
+            if frame is None:
+                time.sleep(0.04)
+                continue
+            
+            if curr["detected"]:
+                if curr["primary_cursor"].get("active", False):
+                    cx = int(curr["primary_cursor"]["x"] * frame.shape[1])
+                    cy = int(curr["primary_cursor"]["y"] * frame.shape[0])
+                    cv2.circle(frame, (cx, cy), 7, (0, 255, 136), 2)
+                    cv2.putText(frame, "P1", (cx + 10, cy - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 136), 2)
 
-                    if curr["secondary_cursor"].get("active", False):
-                        cx2 = int(curr["secondary_cursor"]["x"] * frame.shape[1])
-                        cy2 = int(curr["secondary_cursor"]["y"] * frame.shape[0])
-                        cv2.circle(frame, (cx2, cy2), 7, (0, 165, 255), 2)
-                        cv2.putText(frame, "P2", (cx2 + 10, cy2 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 165, 255), 2)
+                if curr["secondary_cursor"].get("active", False):
+                    cx2 = int(curr["secondary_cursor"]["x"] * frame.shape[1])
+                    cy2 = int(curr["secondary_cursor"]["y"] * frame.shape[0])
+                    cv2.circle(frame, (cx2, cy2), 7, (0, 165, 255), 2)
+                    cv2.putText(frame, "P2", (cx2 + 10, cy2 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 165, 255), 2)
 
             ret, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 55])
             if not ret:
@@ -372,6 +484,17 @@ def video_feed():
                    b'Content-Type: image/jpeg\r\n\r\n' + buffer.tobytes() + b'\r\n')
             time.sleep(0.05)
     return Response(gen(), mimetype='multipart/x-mixed-replace; boundary=frame')
+
+@app.route("/reset_tracking", methods=["POST"])
+def reset_tracking():
+    global tracker_state
+    tracker_state["p1"]["active"] = False
+    tracker_state["p1"]["pos"] = None
+    tracker_state["p1"]["lost_frames"] = 0
+    tracker_state["p2"]["active"] = False
+    tracker_state["p2"]["pos"] = None
+    tracker_state["p2"]["lost_frames"] = 0
+    return jsonify({"status": "ok", "message": "Tracking reseteado correctamente"})
 
 @app.route("/config", methods=["POST"])
 def update_config():

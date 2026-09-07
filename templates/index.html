@@ -138,6 +138,25 @@
                 <input type="checkbox" id="gestureResetToggle">
             </div>
 
+            <!-- Calibración de Suavizado Adaptativo (One Euro Filter) -->
+            <div class="tuning-row">
+                <label>Puntero (1€ Filter): <span id="smoothingVal">Equilibrado</span></label>
+                <input type="range" id="smoothingSlider" min="1" max="5" value="3" step="1">
+            </div>
+
+            <!-- Umbral de Confianza YOLO -->
+            <div class="tuning-row">
+                <label>Confianza YOLO: <span id="confVal">35%</span></label>
+                <input type="range" id="confidenceSlider" min="15" max="70" value="35" step="5">
+            </div>
+
+            <!-- Botón Reasignación Manual de Identidades -->
+            <div class="tuning-row" style="margin-top: 3px;">
+                <button id="btnResetTracking" class="btn-toggle" style="width: 100%; text-align: center; padding: 6px; background: rgba(0, 229, 255, 0.15); border-color: #00e5ff; color: #00e5ff; font-weight: bold;" title="Reasignar Jugador 1 y Jugador 2">
+                    🔄 REASIGNAR JUGADORES (RESET)
+                </button>
+            </div>
+
             <div class="tuning-row">
                 <label>Radio Vórtice: <span id="vortexVal">155px</span></label>
                 <input type="range" id="vortexRadiusSlider" min="50" max="300" value="155" step="5">
