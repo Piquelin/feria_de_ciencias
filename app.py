@@ -85,6 +85,7 @@ config = {
     "enable_gesture_reset": False,
     "inference_size": 256 if device == "cpu" else 384, # 256 en CPU para máxima velocidad
     "frame_skip": 1, # 1: procesa cada frame, 2: procesa 1 de cada 2 frames (duplica FPS)
+    "wind_origin": "shoulders", # "shoulders": centro de los hombros (intuitivo), "nose": nariz
 }
 
 def get_camera():
@@ -168,6 +169,8 @@ def tracking_worker():
                     right_eye = kpts[2]
                     left_ear = kpts[3]
                     right_ear = kpts[4]
+                    left_shoulder = kpts[5] if len(kpts) > 5 else [0, 0]
+                    right_shoulder = kpts[6] if len(kpts) > 6 else [0, 0]
                     left_wrist = kpts[9] if len(kpts) > 9 else [0, 0]
                     right_wrist = kpts[10] if len(kpts) > 10 else [0, 0]
 
@@ -197,16 +200,38 @@ def tracking_worker():
                         else:
                             tilt = float(np.clip(raw_tilt, -1.2, 1.2))
 
+                        # Determinar origen para el vector de viento (manos)
+                        wind_origin_mode = config.get("wind_origin", "shoulders")
+                        if wind_origin_mode == "shoulders":
+                            has_ls = left_shoulder[0] > 0 and left_shoulder[1] > 0
+                            has_rs = right_shoulder[0] > 0 and right_shoulder[1] > 0
+                            if has_ls and has_rs:
+                                origin_x = float((left_shoulder[0] + right_shoulder[0]) / 2.0)
+                                origin_y = float((left_shoulder[1] + right_shoulder[1]) / 2.0)
+                            elif has_ls:
+                                origin_x = float(left_shoulder[0])
+                                origin_y = float(left_shoulder[1])
+                            elif has_rs:
+                                origin_x = float(right_shoulder[0])
+                                origin_y = float(right_shoulder[1])
+                            else:
+                                # Fallback a pecho estimado si no se detectan hombros
+                                origin_x = float(nose[0])
+                                origin_y = float(nose[1] + eye_dist * 1.8)
+                        else:
+                            origin_x = float(nose[0])
+                            origin_y = float(nose[1])
+
                         MAX_VECTOR_LEN = 0.35
                         wind_vx = 0.0
                         wind_vy = 0.0
                         hands_active = 0
                         
                         if left_wrist[0] > 0 and left_wrist[1] > 0:
-                            lvx = left_wrist[0] - nose[0]
-                            lvy = left_wrist[1] - nose[1]
+                            lvx = left_wrist[0] - origin_x
+                            lvy = left_wrist[1] - origin_y
                             dist_l = np.hypot(lvx, lvy)
-                            if dist_l > 0.10:
+                            if dist_l > 0.08:
                                 scale_l = min(dist_l, MAX_VECTOR_LEN) / dist_l
                                 downward_factor = 0.5 if lvy > 0.15 and abs(lvx) < 0.15 else 1.0
                                 wind_vx += lvx * scale_l * downward_factor
@@ -214,10 +239,10 @@ def tracking_worker():
                                 hands_active += 1
 
                         if right_wrist[0] > 0 and right_wrist[1] > 0:
-                            rvx = right_wrist[0] - nose[0]
-                            rvy = right_wrist[1] - nose[1]
+                            rvx = right_wrist[0] - origin_x
+                            rvy = right_wrist[1] - origin_y
                             dist_r = np.hypot(rvx, rvy)
-                            if dist_r > 0.10:
+                            if dist_r > 0.08:
                                 scale_r = min(dist_r, MAX_VECTOR_LEN) / dist_r
                                 downward_factor = 0.5 if rvy > 0.15 and abs(rvx) < 0.15 else 1.0
                                 wind_vx += rvx * scale_r * downward_factor
@@ -241,6 +266,9 @@ def tracking_worker():
                             "right_eye": [float(right_eye[0]), float(right_eye[1])],
                             "left_ear": [float(left_ear[0]), float(left_ear[1])],
                             "right_ear": [float(right_ear[0]), float(right_ear[1])],
+                            "left_shoulder": [float(left_shoulder[0]), float(left_shoulder[1])],
+                            "right_shoulder": [float(right_shoulder[0]), float(right_shoulder[1])],
+                            "wind_origin": [float(origin_x), float(origin_y)],
                             "left_wrist": [float(left_wrist[0]), float(left_wrist[1])],
                             "right_wrist": [float(right_wrist[0]), float(right_wrist[1])],
                             "gesture_reset": gesture_reset,
@@ -378,6 +406,7 @@ def tracking_worker():
                         "wind_vy": float(matched_p1_face["wind_vy"]),
                         "wind_magnitude": float(matched_p1_face["wind_magnitude"]),
                         "wind_angle": float(matched_p1_face["wind_angle"]),
+                        "wind_origin": matched_p1_face.get("wind_origin", [float(smooth_x), float(smooth_y)]),
                         "hands_active": int(matched_p1_face["hands_active"]),
                         "left_wrist": matched_p1_face["left_wrist"],
                         "right_wrist": matched_p1_face["right_wrist"],
@@ -409,6 +438,7 @@ def tracking_worker():
                         "tilt": float(smooth_tilt_p2),
                         "scale": float(smooth_scale_p2),
                         "speed": float(cursor_speed_p2),
+                        "wind_origin": matched_p2_face.get("wind_origin", [float(smooth_x_p2), float(smooth_y_p2)]),
                         "active": True
                     }
 
@@ -466,10 +496,21 @@ def video_feed():
             
             if curr["detected"]:
                 if curr["primary_cursor"].get("active", False):
-                    cx = int(curr["primary_cursor"]["x"] * frame.shape[1])
-                    cy = int(curr["primary_cursor"]["y"] * frame.shape[0])
+                    p1_c = curr["primary_cursor"]
+                    cx = int(p1_c["x"] * frame.shape[1])
+                    cy = int(p1_c["y"] * frame.shape[0])
                     cv2.circle(frame, (cx, cy), 7, (0, 255, 136), 2)
                     cv2.putText(frame, "P1", (cx + 10, cy - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 136), 2)
+
+                    # Visualización del origen y vector de viento en la miniatura de calibración
+                    if p1_c.get("hands_active", 0) > 0 and p1_c.get("wind_magnitude", 0) > 0.02:
+                        wor = p1_c.get("wind_origin", [p1_c["x"], p1_c["y"]])
+                        ox = int(wor[0] * frame.shape[1])
+                        oy = int(wor[1] * frame.shape[0])
+                        wvx = int(p1_c.get("wind_vx", 0) * frame.shape[1] * 1.5)
+                        wvy = int(p1_c.get("wind_vy", 0) * frame.shape[0] * 1.5)
+                        cv2.circle(frame, (ox, oy), 4, (0, 255, 255), -1)
+                        cv2.arrowedLine(frame, (ox, oy), (ox + wvx, oy + wvy), (0, 255, 255), 2, tipLength=0.25)
 
                 if curr["secondary_cursor"].get("active", False):
                     cx2 = int(curr["secondary_cursor"]["x"] * frame.shape[1])
@@ -512,6 +553,8 @@ def update_config():
         config["inference_size"] = int(req["inference_size"])
     if "frame_skip" in req:
         config["frame_skip"] = int(req["frame_skip"])
+    if "wind_origin" in req:
+        config["wind_origin"] = str(req["wind_origin"])
     return jsonify({"status": "ok", "config": config})
 
 @app.route("/api/hiscores", methods=["GET", "POST"])

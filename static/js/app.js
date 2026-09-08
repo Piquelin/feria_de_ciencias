@@ -64,6 +64,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const confidenceSlider = document.getElementById('confidenceSlider');
     const confVal = document.getElementById('confVal');
     const btnResetTracking = document.getElementById('btnResetTracking');
+    const windOriginSelect = document.getElementById('windOriginSelect');
 
     // Instanciar motor de partículas
     const engine = new ParticleEngine(canvas);
@@ -199,6 +200,20 @@ document.addEventListener('DOMContentLoaded', () => {
                 .catch(() => {
                     showToast('Tracking reiniciado.');
                 });
+        });
+    }
+
+    // Selector de Origen de Vector Viento / Manos (Hombros vs Nariz)
+    if (windOriginSelect) {
+        windOriginSelect.addEventListener('change', (e) => {
+            const originMode = e.target.value;
+            fetch('/config', {
+                method: 'POST',
+                body: JSON.stringify({ wind_origin: originMode })
+            }).then(() => {
+                const label = originMode === 'shoulders' ? 'CENTRO DE HOMBROS' : 'NARIZ';
+                showToast(`ORIGEN VIENTO: ${label}`);
+            });
         });
     }
 
