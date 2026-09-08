@@ -188,11 +188,18 @@
             <div id="trailsControls" class="tuning-group" style="border-top: 1px dashed var(--panel-border); padding-top: 6px; margin-top: 4px;">
                 <div class="tuning-title" style="color: #00ffcc; font-size: 0.68rem; margin-bottom: 4px;">🎨 CALIBRACIÓN ESTELAS</div>
                 <div class="tuning-row">
+                    <label>Control de Dibujo:</label>
+                    <select id="trailSourceSelect" class="tuning-select" style="border-color: #00ffcc;">
+                        <option value="hands" selected>🙌 Manos + Hombros (Modo 1)</option>
+                        <option value="nose">👃 Nariz / Cabeza Directa</option>
+                    </select>
+                </div>
+                <div class="tuning-row">
                     <label>Duración Estela: <span id="trailDurationVal">3.5s</span></label>
                     <input type="range" id="trailDurationSlider" min="1.0" max="10.0" value="3.5" step="0.5">
                 </div>
                 <div class="tuning-row">
-                    <label>Tamaño Punto / Trazo: <span id="pointSizeVal">16px</span></label>
+                    <label>Tamaño Icosaedro / Trazo: <span id="pointSizeVal">16px</span></label>
                     <input type="range" id="pointSizeSlider" min="6" max="36" value="16" step="2">
                 </div>
             </div>

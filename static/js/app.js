@@ -68,6 +68,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Controles de Modo 4: Estelas (Multi-dibujo)
     const trailsControls = document.getElementById('trailsControls');
+    const trailSourceSelect = document.getElementById('trailSourceSelect');
     const trailDurationSlider = document.getElementById('trailDurationSlider');
     const trailDurationVal = document.getElementById('trailDurationVal');
     const pointSizeSlider = document.getElementById('pointSizeSlider');
@@ -146,7 +147,16 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
-    // Sliders de Modo Estelas (Multi-dibujo)
+    // Controles de Modo Estelas (Multi-dibujo)
+    if (trailSourceSelect) {
+        trailSourceSelect.addEventListener('change', (e) => {
+            const source = e.target.value;
+            engine.setTrailSource(source);
+            const label = (source === 'nose') ? 'NARIZ / CABEZA' : 'MANOS + HOMBROS (MODO 1)';
+            showToast(`CONTROL ESTELAS: ${label}`);
+        });
+    }
+
     if (trailDurationSlider) {
         trailDurationSlider.addEventListener('input', (e) => {
             const val = parseFloat(e.target.value);

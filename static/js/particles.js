@@ -124,6 +124,7 @@ class ParticleEngine {
         // Parámetros y estado de Modo 4: Estelas Colaborativas (Multi-persona)
         this.trailDuration = 3.5; // Segundos que persiste la estela (calibrable 1.0s - 10.0s)
         this.pointSize = 16;      // Radio / grosor del punto en píxeles (calibrable 6px - 40px)
+        this.trailSource = 'hands'; // 'hands' (vector muñecas + centro hombros como Modo 1) o 'nose' (nariz directa)
         
         // Paleta de colores de alto contraste por jugador (Modo Normal vs Modo Invertido B/W)
         this.trailColors = [
@@ -229,6 +230,10 @@ class ParticleEngine {
 
     setPointSize(px) {
         this.pointSize = Math.max(4, Math.min(60, parseFloat(px) || 16));
+    }
+
+    setTrailSource(source) {
+        this.trailSource = (source === 'nose') ? 'nose' : 'hands';
     }
 
     setInverted(val) {
@@ -348,6 +353,28 @@ class ParticleEngine {
             const assignedDrawers = new Set();
             const assignedFaces = new Set();
 
+            // Función auxiliar para obtener posición de dibujo según trailSource ('hands' o 'nose')
+            const getDrawPos = (face) => {
+                if (this.trailSource === 'hands') {
+                    // Origen base: centro de hombros (wind_origin) si está disponible, o nariz
+                    const baseOrigin = face.wind_origin || face.nose;
+                    let targetNormX = baseOrigin[0];
+                    let targetNormY = baseOrigin[1];
+
+                    // Proyectar hacia adelante con el vector de viento de las muñecas
+                    if (face.wind_vx !== undefined && face.wind_vy !== undefined) {
+                        targetNormX += face.wind_vx * 0.9;
+                        targetNormY += face.wind_vy * 0.9;
+                    }
+                    // Clampear a pantalla [0, 1]
+                    targetNormX = Math.max(0.02, Math.min(0.98, targetNormX));
+                    targetNormY = Math.max(0.02, Math.min(0.98, targetNormY));
+                    return [targetNormX, targetNormY];
+                } else {
+                    return [face.nose[0], face.nose[1]];
+                }
+            };
+
             for (const d of this.drawers) {
                 if (!d.active) continue;
                 let bestIdx = -1;
@@ -355,7 +382,7 @@ class ParticleEngine {
                 for (let i = 0; i < faces.length; i++) {
                     if (assignedFaces.has(i)) continue;
                     const f = faces[i];
-                    const dist = Math.hypot(f.nose[0] - d.normX, f.nose[1] - d.normY);
+                    const dist = Math.hypot(f.nose[0] - d.normFaceX, f.nose[1] - d.normFaceY);
                     if (dist < bestDist) {
                         bestDist = dist;
                         bestIdx = i;
@@ -363,10 +390,12 @@ class ParticleEngine {
                 }
                 if (bestIdx !== -1) {
                     const matchedFace = faces[bestIdx];
-                    d.normX = matchedFace.nose[0];
-                    d.normY = matchedFace.nose[1];
-                    d.targetX = matchedFace.nose[0] * this.width;
-                    d.targetY = matchedFace.nose[1] * this.height;
+                    const [px, py] = getDrawPos(matchedFace);
+                    d.normFaceX = matchedFace.nose[0];
+                    d.normFaceY = matchedFace.nose[1];
+                    d.targetX = px * this.width;
+                    d.targetY = py * this.height;
+                    d.tilt = matchedFace.tilt || 0;
                     d.lastSeen = nowTime;
                     assignedDrawers.add(d.id);
                     assignedFaces.add(bestIdx);
@@ -379,13 +408,15 @@ class ParticleEngine {
                 const freeDrawer = this.drawers.find(d => !d.active && !assignedDrawers.has(d.id));
                 if (freeDrawer) {
                     const f = faces[i];
+                    const [px, py] = getDrawPos(f);
                     freeDrawer.active = true;
-                    freeDrawer.normX = f.nose[0];
-                    freeDrawer.normY = f.nose[1];
-                    freeDrawer.targetX = f.nose[0] * this.width;
-                    freeDrawer.targetY = f.nose[1] * this.height;
+                    freeDrawer.normFaceX = f.nose[0];
+                    freeDrawer.normFaceY = f.nose[1];
+                    freeDrawer.targetX = px * this.width;
+                    freeDrawer.targetY = py * this.height;
                     freeDrawer.x = freeDrawer.targetX;
                     freeDrawer.y = freeDrawer.targetY;
+                    freeDrawer.tilt = f.tilt || 0;
                     freeDrawer.filterX.reset();
                     freeDrawer.filterY.reset();
                     freeDrawer.points = [];
@@ -764,35 +795,118 @@ class ParticleEngine {
                     ctx.restore();
                 }
 
-                // 2. Dibujar cursor brillante / punto activo si la persona sigue presente
+                // 2. Dibujar cursor como ICOSAEDRO 3D GIRANDO si la persona sigue presente
                 if (d.active) {
                     ctx.save();
                     ctx.translate(d.x, d.y);
 
-                    // Halo exterior brillante
+                    // Halo exterior brillante de ambiente
                     ctx.globalAlpha = 0.25;
                     ctx.fillStyle = color;
                     ctx.beginPath();
-                    ctx.arc(0, 0, baseRadius * 1.6, 0, Math.PI * 2);
+                    ctx.arc(0, 0, baseRadius * 1.5, 0, Math.PI * 2);
                     ctx.fill();
 
-                    // Núcleo sólido de alta visibilidad
-                    ctx.globalAlpha = 0.95;
-                    ctx.beginPath();
-                    ctx.arc(0, 0, baseRadius, 0, Math.PI * 2);
-                    ctx.fill();
+                    // --- Geometría y Rotación 3D del Icosaedro ---
+                    const t = now * 0.0018 + d.id * 1.2;
+                    const rotX = t * 0.9;
+                    const rotY = t * 1.3;
+                    const rotZ = (d.tilt || 0) + t * 0.4;
+                    const r = baseRadius * 1.25; // Radio escala del icosaedro
 
-                    // Borde de contraste (blanco o negro según inversión)
-                    ctx.strokeStyle = this.isInverted ? '#000000' : '#ffffff';
-                    ctx.lineWidth = 2.5;
+                    // Proporción áurea phi
+                    const phi = (1 + Math.sqrt(5)) / 2;
+                    const normFactor = 1.0 / Math.sqrt(1 + phi * phi);
+                    const a = r * normFactor;
+                    const b = r * phi * normFactor;
+
+                    // 12 Vértices estándar del icosaedro regular
+                    const vertices = [
+                        [-a,  b,  0], [ a,  b,  0], [-a, -b,  0], [ a, -b,  0],
+                        [ 0, -a,  b], [ 0,  a,  b], [ 0, -a, -b], [ 0,  a, -b],
+                        [ b,  0, -a], [ b,  0,  a], [-b,  0, -a], [-b,  0,  a]
+                    ];
+
+                    // 30 Aristas del icosaedro que conectan los 12 vértices
+                    const edges = [
+                        [0, 11], [0, 5], [0, 1], [0, 7], [0, 10],
+                        [1, 5], [5, 11], [11, 10], [10, 7], [7, 1],
+                        [3, 9], [3, 4], [3, 2], [3, 6], [3, 8],
+                        [4, 9], [2, 4], [6, 2], [8, 6], [9, 8],
+                        [4, 5], [5, 9], [9, 1], [1, 8], [8, 7],
+                        [7, 6], [6, 10], [10, 2], [2, 11], [11, 4]
+                    ];
+
+                    // Funciones trigonométricas para matrices de rotación 3D (Euler X -> Y -> Z)
+                    const cosX = Math.cos(rotX), sinX = Math.sin(rotX);
+                    const cosY = Math.cos(rotY), sinY = Math.sin(rotY);
+                    const cosZ = Math.cos(rotZ), sinZ = Math.sin(rotZ);
+
+                    const projected = vertices.map(v => {
+                        // Rotar en eje X
+                        let y1 = v[1] * cosX - v[2] * sinX;
+                        let z1 = v[1] * sinX + v[2] * cosX;
+                        let x1 = v[0];
+
+                        // Rotar en eje Y
+                        let x2 = x1 * cosY + z1 * sinY;
+                        let z2 = -x1 * sinY + z1 * cosY;
+                        let y2 = y1;
+
+                        // Rotar en eje Z
+                        let x3 = x2 * cosZ - y2 * sinZ;
+                        let y3 = x2 * sinZ + y2 * cosZ;
+                        let z3 = z2;
+
+                        // Proyección ortográfica / perspectiva suave
+                        const fov = 160;
+                        const pScale = fov / (fov + z3);
+                        return { x: x3 * pScale, y: y3 * pScale, z: z3 };
+                    });
+
+                    // Dibujar las 30 aristas alámbricas con degradé por profundidad Z
+                    ctx.save();
+                    ctx.lineCap = 'round';
+                    for (const edge of edges) {
+                        const p1 = projected[edge[0]];
+                        const p2 = projected[edge[1]];
+                        const avgZ = (p1.z + p2.z) / 2;
+                        // Opacidad variable según profundidad (más brillante adelante)
+                        const depthAlpha = Math.max(0.35, Math.min(1.0, 0.7 + (avgZ / (r * 2))));
+
+                        ctx.globalAlpha = depthAlpha;
+                        ctx.strokeStyle = color;
+                        ctx.lineWidth = Math.max(1.5, baseRadius * 0.16);
+                        ctx.beginPath();
+                        ctx.moveTo(p1.x, p1.y);
+                        ctx.lineTo(p2.x, p2.y);
+                        ctx.stroke();
+                    }
+
+                    // Vértices frontales como puntos de luz
+                    for (const p of projected) {
+                        if (p.z > -r * 0.3) {
+                            ctx.globalAlpha = Math.max(0.4, Math.min(1.0, 0.7 + p.z / r));
+                            ctx.fillStyle = this.isInverted ? '#000000' : '#ffffff';
+                            ctx.beginPath();
+                            ctx.arc(p.x, p.y, Math.max(1.5, baseRadius * 0.12), 0, Math.PI * 2);
+                            ctx.fill();
+                        }
+                    }
+                    ctx.restore();
+
+                    // Núcleo central pulsante
+                    ctx.globalAlpha = 0.9;
+                    ctx.fillStyle = color;
                     ctx.beginPath();
-                    ctx.arc(0, 0, baseRadius, 0, Math.PI * 2);
-                    ctx.stroke();
+                    ctx.arc(0, 0, Math.max(2.5, baseRadius * 0.28), 0, Math.PI * 2);
+                    ctx.fill();
 
                     // Etiqueta de Jugador (P1, P2, P3...)
+                    ctx.globalAlpha = 1.0;
                     ctx.fillStyle = this.isInverted ? '#000000' : '#ffffff';
                     ctx.font = 'bold 12px monospace';
-                    ctx.fillText(`P${d.id + 1}`, baseRadius + 6, 4);
+                    ctx.fillText(`P${d.id + 1}`, baseRadius + 8, 4);
 
                     ctx.restore();
                 }
