@@ -533,7 +533,18 @@ document.addEventListener('DOMContentLoaded', () => {
     function toggleHud() {
         hudVisible = !hudVisible;
         if (hud) hud.classList.toggle('hidden', !hudVisible);
-        showToast(hudVisible ? 'HUD VISIBLE' : 'HUD OCULTO (PROYECCIÓN LIMPIA)');
+        
+        // Optimización: al ocultar el HUD (H), desconectar el video feed para ahorrar 100% de CPU en copias y compresión JPEG.
+        const camImg = document.getElementById('camPreviewImg');
+        if (camImg) {
+            if (hudVisible) {
+                camImg.src = '/video_feed';
+            } else {
+                camImg.src = '';
+            }
+        }
+        
+        showToast(hudVisible ? 'HUD VISIBLE (VIDEO ON)' : 'HUD OCULTO (PROYECCIÓN LIMPIA / SOLO KEYPOINTS)');
     }
 
     // Toggle Fullscreen

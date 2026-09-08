@@ -53,6 +53,7 @@ lock = threading.Lock()
 camera = None
 is_running = True
 latest_preview_frame = None
+active_video_clients = 0
 
 # Estado de persistencia espacial para P1 y P2 (evita saltos entre personas)
 MAX_MATCH_DIST = 0.28   # Radio de búsqueda normalizado
@@ -99,7 +100,7 @@ def get_camera():
     return camera
 
 def tracking_worker():
-    global current_tracking_data, prev_cursor, prev_cursor_p2, is_running
+    global current_tracking_data, prev_cursor, prev_cursor_p2, is_running, latest_preview_frame, active_video_clients
     cap = get_camera()
     last_frame_time = time.time()
     
@@ -131,8 +132,14 @@ def tracking_worker():
             if config["flip_horizontal"]:
                 frame = cv2.flip(frame, 1)
 
-            with lock:
-                latest_preview_frame = frame.copy()
+            # Si el HUD está visible y pide stream de video, guardar copia para /video_feed
+            # Si el HUD está oculto, active_video_clients == 0 y se ahorra la copia y compresión de frames
+            if active_video_clients > 0:
+                with lock:
+                    latest_preview_frame = frame.copy()
+            else:
+                with lock:
+                    latest_preview_frame = None
 
             frame_counter += 1
             skip_rate = max(config.get("frame_skip", 1), 1)
@@ -482,48 +489,55 @@ def stream_data():
 def video_feed():
     """Feed de video opcional en miniatura para calibración y alineación en vivo (desacoplado sin cap.read concurrentes)."""
     def gen():
-        while is_running:
+        global active_video_clients
+        with lock:
+            active_video_clients += 1
+        try:
+            while is_running:
+                with lock:
+                    if latest_preview_frame is None:
+                        frame = None
+                    else:
+                        frame = latest_preview_frame.copy()
+                    curr = current_tracking_data
+                
+                if frame is None:
+                    time.sleep(0.04)
+                    continue
+                
+                if curr["detected"]:
+                    if curr["primary_cursor"].get("active", False):
+                        p1_c = curr["primary_cursor"]
+                        cx = int(p1_c["x"] * frame.shape[1])
+                        cy = int(p1_c["y"] * frame.shape[0])
+                        cv2.circle(frame, (cx, cy), 7, (0, 255, 136), 2)
+                        cv2.putText(frame, "P1", (cx + 10, cy - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 136), 2)
+
+                        # Visualización del origen y vector de viento en la miniatura de calibración
+                        if p1_c.get("hands_active", 0) > 0 and p1_c.get("wind_magnitude", 0) > 0.02:
+                            wor = p1_c.get("wind_origin", [p1_c["x"], p1_c["y"]])
+                            ox = int(wor[0] * frame.shape[1])
+                            oy = int(wor[1] * frame.shape[0])
+                            wvx = int(p1_c.get("wind_vx", 0) * frame.shape[1] * 1.5)
+                            wvy = int(p1_c.get("wind_vy", 0) * frame.shape[0] * 1.5)
+                            cv2.circle(frame, (ox, oy), 4, (0, 255, 255), -1)
+                            cv2.arrowedLine(frame, (ox, oy), (ox + wvx, oy + wvy), (0, 255, 255), 2, tipLength=0.25)
+
+                    if curr["secondary_cursor"].get("active", False):
+                        cx2 = int(curr["secondary_cursor"]["x"] * frame.shape[1])
+                        cy2 = int(curr["secondary_cursor"]["y"] * frame.shape[0])
+                        cv2.circle(frame, (cx2, cy2), 7, (0, 165, 255), 2)
+                        cv2.putText(frame, "P2", (cx2 + 10, cy2 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 165, 255), 2)
+
+                ret, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 55])
+                if not ret:
+                    continue
+                yield (b'--frame\r\n'
+                       b'Content-Type: image/jpeg\r\n\r\n' + buffer.tobytes() + b'\r\n')
+                time.sleep(0.05)
+        finally:
             with lock:
-                if latest_preview_frame is None:
-                    frame = None
-                else:
-                    frame = latest_preview_frame.copy()
-                curr = current_tracking_data
-            
-            if frame is None:
-                time.sleep(0.04)
-                continue
-            
-            if curr["detected"]:
-                if curr["primary_cursor"].get("active", False):
-                    p1_c = curr["primary_cursor"]
-                    cx = int(p1_c["x"] * frame.shape[1])
-                    cy = int(p1_c["y"] * frame.shape[0])
-                    cv2.circle(frame, (cx, cy), 7, (0, 255, 136), 2)
-                    cv2.putText(frame, "P1", (cx + 10, cy - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 136), 2)
-
-                    # Visualización del origen y vector de viento en la miniatura de calibración
-                    if p1_c.get("hands_active", 0) > 0 and p1_c.get("wind_magnitude", 0) > 0.02:
-                        wor = p1_c.get("wind_origin", [p1_c["x"], p1_c["y"]])
-                        ox = int(wor[0] * frame.shape[1])
-                        oy = int(wor[1] * frame.shape[0])
-                        wvx = int(p1_c.get("wind_vx", 0) * frame.shape[1] * 1.5)
-                        wvy = int(p1_c.get("wind_vy", 0) * frame.shape[0] * 1.5)
-                        cv2.circle(frame, (ox, oy), 4, (0, 255, 255), -1)
-                        cv2.arrowedLine(frame, (ox, oy), (ox + wvx, oy + wvy), (0, 255, 255), 2, tipLength=0.25)
-
-                if curr["secondary_cursor"].get("active", False):
-                    cx2 = int(curr["secondary_cursor"]["x"] * frame.shape[1])
-                    cy2 = int(curr["secondary_cursor"]["y"] * frame.shape[0])
-                    cv2.circle(frame, (cx2, cy2), 7, (0, 165, 255), 2)
-                    cv2.putText(frame, "P2", (cx2 + 10, cy2 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 165, 255), 2)
-
-            ret, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 55])
-            if not ret:
-                continue
-            yield (b'--frame\r\n'
-                   b'Content-Type: image/jpeg\r\n\r\n' + buffer.tobytes() + b'\r\n')
-            time.sleep(0.05)
+                active_video_clients = max(0, active_video_clients - 1)
     return Response(gen(), mimetype='multipart/x-mixed-replace; boundary=frame')
 
 @app.route("/reset_tracking", methods=["POST"])
