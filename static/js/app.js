@@ -66,6 +66,14 @@ document.addEventListener('DOMContentLoaded', () => {
     const btnResetTracking = document.getElementById('btnResetTracking');
     const windOriginSelect = document.getElementById('windOriginSelect');
 
+    // Controles de Modo 4: Estelas (Multi-dibujo)
+    const trailsControls = document.getElementById('trailsControls');
+    const trailDurationSlider = document.getElementById('trailDurationSlider');
+    const trailDurationVal = document.getElementById('trailDurationVal');
+    const pointSizeSlider = document.getElementById('pointSizeSlider');
+    const pointSizeVal = document.getElementById('pointSizeVal');
+    if (trailsControls) trailsControls.style.display = 'none';
+
     // Instanciar motor de partículas
     const engine = new ParticleEngine(canvas);
     window.addEventListener('resize', () => engine.resize());
@@ -135,6 +143,23 @@ document.addEventListener('DOMContentLoaded', () => {
             const val = parseFloat(e.target.value);
             engine.params.friction = val;
             if (frictionVal) frictionVal.textContent = `${val.toFixed(2)}`;
+        });
+    }
+
+    // Sliders de Modo Estelas (Multi-dibujo)
+    if (trailDurationSlider) {
+        trailDurationSlider.addEventListener('input', (e) => {
+            const val = parseFloat(e.target.value);
+            engine.setTrailDuration(val);
+            if (trailDurationVal) trailDurationVal.textContent = `${val.toFixed(1)}s`;
+        });
+    }
+
+    if (pointSizeSlider) {
+        pointSizeSlider.addEventListener('input', (e) => {
+            const val = parseInt(e.target.value);
+            engine.setPointSize(val);
+            if (pointSizeVal) pointSizeVal.textContent = `${val}px`;
         });
     }
 
@@ -496,18 +521,27 @@ document.addEventListener('DOMContentLoaded', () => {
             if (quadrantPanel) quadrantPanel.classList.remove('hidden');
             if (gameControlPanel) gameControlPanel.classList.add('hidden');
             if (gameFloatingOverlay) gameFloatingOverlay.classList.add('hidden');
+            if (trailsControls) trailsControls.style.display = 'none';
             showToast('MODO 2: TABLERO CUADRANTE ACCESIBLE');
         } else if (modeName === 'bubbles') {
             if (quadrantPanel) quadrantPanel.classList.add('hidden');
             if (gameControlPanel) gameControlPanel.classList.remove('hidden');
             if (gameFloatingOverlay) gameFloatingOverlay.classList.remove('hidden');
+            if (trailsControls) trailsControls.style.display = 'none';
             engine.initBubbles();
             updateTimerDisplay(gameDurationSeconds);
             showToast('MODO 3: 🎮 JUEGO DE BURBUJAS');
+        } else if (modeName === 'trails') {
+            if (quadrantPanel) quadrantPanel.classList.add('hidden');
+            if (gameControlPanel) gameControlPanel.classList.add('hidden');
+            if (gameFloatingOverlay) gameFloatingOverlay.classList.add('hidden');
+            if (trailsControls) trailsControls.style.display = 'block';
+            showToast('MODO 4: 🎨 ESTELAS (DIBUJO COLABORATIVO)');
         } else {
             if (quadrantPanel) quadrantPanel.classList.add('hidden');
             if (gameControlPanel) gameControlPanel.classList.add('hidden');
             if (gameFloatingOverlay) gameFloatingOverlay.classList.add('hidden');
+            if (trailsControls) trailsControls.style.display = 'none';
             showToast('MODO 1: SWARM / VÓRTICE');
         }
     }
@@ -558,12 +592,13 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
 
-    // Atajos de teclado (1, 2, 3)
+    // Atajos de teclado (1, 2, 3, 4)
     window.addEventListener('keydown', (e) => {
         const key = e.key.toLowerCase();
         if (key === '1') switchMode('swarm');
         else if (key === '2') switchMode('quadrant');
         else if (key === '3') switchMode('bubbles');
+        else if (key === '4') switchMode('trails');
         else if (key === 'i') toggleInversion();
         else if (key === 'h') toggleHud();
         else if (key === 'f') toggleFullscreen();
@@ -573,6 +608,9 @@ document.addEventListener('DOMContentLoaded', () => {
         } else if (key === 'r') {
             engine.initParticles();
             if (engine.mode === 'bubbles') engine.initBubbles();
+            if (engine.mode === 'trails' && engine.drawers) {
+                engine.drawers.forEach(d => d.points = []);
+            }
             showToast('REINICIADO');
         }
     });

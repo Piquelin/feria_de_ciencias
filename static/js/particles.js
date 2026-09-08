@@ -109,10 +109,57 @@ class ParticleEngine {
                 maxSpeed: 6.0,
                 friction: 0.92,
                 gravity: 0.001
+            },
+            trails: {
+                vortexRadius: 130,
+                windStrength: 1.2,
+                maxSpeed: 7.0,
+                friction: 0.90,
+                gravity: 0.002
             }
         };
 
         this.params = { ...this.modeParams.swarm };
+
+        // Parámetros y estado de Modo 4: Estelas Colaborativas (Multi-persona)
+        this.trailDuration = 3.5; // Segundos que persiste la estela (calibrable 1.0s - 10.0s)
+        this.pointSize = 16;      // Radio / grosor del punto en píxeles (calibrable 6px - 40px)
+        
+        // Paleta de colores de alto contraste por jugador (Modo Normal vs Modo Invertido B/W)
+        this.trailColors = [
+            '#00ffcc', // P1: Cian Neón brillante
+            '#ff007f', // P2: Rosa / Magenta eléctrico
+            '#ffe600', // P3: Amarillo Neón
+            '#00ff66', // P4: Verde Lima brillante
+            '#ff6600', // P5: Naranja vívido
+            '#aa00ff'  // P6: Púrpura eléctrico
+        ];
+        this.trailColorsInverted = [
+            '#005577', // P1 Invertido
+            '#990044', // P2 Invertido
+            '#886600', // P3 Invertido
+            '#006622', // P4 Invertido
+            '#aa3300', // P5 Invertido
+            '#550088'  // P6 Invertido
+        ];
+
+        // Slots de participantes para dibujo en tiempo real (hasta 6 personas simultáneas)
+        this.drawers = [];
+        for (let i = 0; i < 6; i++) {
+            this.drawers.push({
+                id: i,
+                active: false,
+                targetX: this.width / 2,
+                targetY: this.height / 2,
+                x: this.width / 2,
+                y: this.height / 2,
+                filterX: new OneEuroFilter(1.2, 0.008),
+                filterY: new OneEuroFilter(1.2, 0.008),
+                points: [],      // Array de { x, y, time }
+                lastSeen: 0,
+                colorIndex: i
+            });
+        }
 
         // Jugador 1 (Principal)
         this.cursor = {
@@ -165,13 +212,23 @@ class ParticleEngine {
         }
         
         // Optimización de rendimiento para notebooks modestas:
-        // Reducir la cantidad de partículas si entramos a modo juego de burbujas
+        // Reducir la cantidad de partículas si entramos a modo juego de burbujas o estelas
         if (newMode === 'bubbles') {
             this.numParticles = 250; // Alivia drásticamente la GPU/CPU integrada
+        } else if (newMode === 'trails') {
+            this.numParticles = 500; // Estética de enjambre suave de fondo sin competir con el dibujo
         } else {
             this.numParticles = 1600;
         }
         this.initParticles();
+    }
+
+    setTrailDuration(sec) {
+        this.trailDuration = Math.max(0.5, Math.min(15.0, parseFloat(sec) || 3.5));
+    }
+
+    setPointSize(px) {
+        this.pointSize = Math.max(4, Math.min(60, parseFloat(px) || 16));
     }
 
     setInverted(val) {
@@ -281,6 +338,74 @@ class ParticleEngine {
             }
             this.cursorP2.active = false;
         }
+
+        // Tracking Multi-persona para Modo Estelas (data.faces contiene todas las detecciones)
+        if (this.mode === 'trails') {
+            const nowTime = performance.now();
+            const faces = (data.faces || []).filter(f => f && f.nose && f.nose[0] > 0);
+            
+            // Emparejamiento por distancia euclídea mínima entre drawers existentes y caras detectadas
+            const assignedDrawers = new Set();
+            const assignedFaces = new Set();
+
+            for (const d of this.drawers) {
+                if (!d.active) continue;
+                let bestIdx = -1;
+                let bestDist = 0.28; // Umbral de distancia normalizada (~28% de la pantalla)
+                for (let i = 0; i < faces.length; i++) {
+                    if (assignedFaces.has(i)) continue;
+                    const f = faces[i];
+                    const dist = Math.hypot(f.nose[0] - d.normX, f.nose[1] - d.normY);
+                    if (dist < bestDist) {
+                        bestDist = dist;
+                        bestIdx = i;
+                    }
+                }
+                if (bestIdx !== -1) {
+                    const matchedFace = faces[bestIdx];
+                    d.normX = matchedFace.nose[0];
+                    d.normY = matchedFace.nose[1];
+                    d.targetX = matchedFace.nose[0] * this.width;
+                    d.targetY = matchedFace.nose[1] * this.height;
+                    d.lastSeen = nowTime;
+                    assignedDrawers.add(d.id);
+                    assignedFaces.add(bestIdx);
+                }
+            }
+
+            // Asignar nuevas caras a drawers inactivos
+            for (let i = 0; i < faces.length; i++) {
+                if (assignedFaces.has(i)) continue;
+                const freeDrawer = this.drawers.find(d => !d.active && !assignedDrawers.has(d.id));
+                if (freeDrawer) {
+                    const f = faces[i];
+                    freeDrawer.active = true;
+                    freeDrawer.normX = f.nose[0];
+                    freeDrawer.normY = f.nose[1];
+                    freeDrawer.targetX = f.nose[0] * this.width;
+                    freeDrawer.targetY = f.nose[1] * this.height;
+                    freeDrawer.x = freeDrawer.targetX;
+                    freeDrawer.y = freeDrawer.targetY;
+                    freeDrawer.filterX.reset();
+                    freeDrawer.filterY.reset();
+                    freeDrawer.points = [];
+                    freeDrawer.lastSeen = nowTime;
+                    assignedDrawers.add(freeDrawer.id);
+                    assignedFaces.add(i);
+                }
+            }
+
+            // Desactivar drawers que llevan más de 650ms sin detectarse
+            for (const d of this.drawers) {
+                if (d.active && !assignedDrawers.has(d.id)) {
+                    if (nowTime - d.lastSeen > 650) {
+                        d.active = false;
+                        d.filterX.reset();
+                        d.filterY.reset();
+                    }
+                }
+            }
+        }
     }
 
     update() {
@@ -296,6 +421,28 @@ class ParticleEngine {
         if (this.cursorP2.active) {
             this.cursorP2.x = this.filterP2X.filter(this.cursorP2.targetX, now);
             this.cursorP2.y = this.filterP2Y.filter(this.cursorP2.targetY, now);
+        }
+
+        // Actualización de Drawers en Modo Estelas (filtro OneEuro + acumulación de puntos)
+        if (this.mode === 'trails') {
+            const maxAge = this.trailDuration * 1000;
+            for (const d of this.drawers) {
+                if (d.active) {
+                    d.x = d.filterX.filter(d.targetX, now);
+                    d.y = d.filterY.filter(d.targetY, now);
+
+                    // Registrar punto en la estela si hay suficiente distancia mínima (optimización de memoria)
+                    const lastPt = d.points.length > 0 ? d.points[d.points.length - 1] : null;
+                    if (!lastPt || Math.hypot(d.x - lastPt.x, d.y - lastPt.y) > 2.5) {
+                        d.points.push({ x: d.x, y: d.y, time: now });
+                    }
+                }
+
+                // Podar puntos que excedan la duración de la estela
+                while (d.points.length > 0 && (now - d.points[0].time) > maxAge) {
+                    d.points.shift();
+                }
+            }
         }
 
         const cx = this.cursor.x;
@@ -352,6 +499,24 @@ class ParticleEngine {
                 p.y += p.vy * 0.5 + handWindY * 0.1;
                 p.vx *= 0.95;
                 p.vy *= 0.95;
+            } else if (this.mode === 'trails') {
+                // En modo estelas, las partículas flotan suavemente y se apartan de los dibujantes activos
+                for (const d of this.drawers) {
+                    if (d.active) {
+                        const ddx = p.x - d.x;
+                        const ddy = p.y - d.y;
+                        const dDist = Math.hypot(ddx, ddy) || 1;
+                        if (dDist < 80) {
+                            const repulse = (1 - dDist / 80) * 1.5;
+                            p.vx += (ddx / dDist) * repulse;
+                            p.vy += (ddy / dDist) * repulse;
+                        }
+                    }
+                }
+                p.vx *= 0.92;
+                p.vy *= 0.92;
+                p.x += p.vx;
+                p.y += p.vy;
             }
 
             if (p.x < 0) { p.x = this.width; }
@@ -561,6 +726,77 @@ class ParticleEngine {
             ctx.font = 'bold 12px monospace';
             ctx.fillText('P2', 25, -5);
             ctx.restore();
+        }
+
+        // MODO 4: Renderizado de Estelas y Punteros Colaborativos Multi-persona
+        if (this.mode === 'trails') {
+            const now = performance.now();
+            const maxDurationMs = this.trailDuration * 1000;
+            const colors = this.isInverted ? this.trailColorsInverted : this.trailColors;
+            const baseRadius = this.pointSize;
+
+            for (const d of this.drawers) {
+                const color = colors[d.colorIndex % colors.length];
+
+                // 1. Dibujar estela continua con degradé de opacidad y grosor según su antigüedad
+                if (d.points.length > 1) {
+                    ctx.save();
+                    ctx.lineCap = 'round';
+                    ctx.lineJoin = 'round';
+                    ctx.strokeStyle = color;
+
+                    for (let j = 0; j < d.points.length - 1; j++) {
+                        const pt1 = d.points[j];
+                        const pt2 = d.points[j + 1];
+                        const age = now - pt2.time;
+                        const lifeRatio = Math.max(0, 1 - (age / maxDurationMs));
+
+                        if (lifeRatio <= 0) continue;
+
+                        ctx.globalAlpha = lifeRatio * 0.88;
+                        ctx.lineWidth = Math.max(2, baseRadius * 1.8 * lifeRatio);
+
+                        ctx.beginPath();
+                        ctx.moveTo(pt1.x, pt1.y);
+                        ctx.lineTo(pt2.x, pt2.y);
+                        ctx.stroke();
+                    }
+                    ctx.restore();
+                }
+
+                // 2. Dibujar cursor brillante / punto activo si la persona sigue presente
+                if (d.active) {
+                    ctx.save();
+                    ctx.translate(d.x, d.y);
+
+                    // Halo exterior brillante
+                    ctx.globalAlpha = 0.25;
+                    ctx.fillStyle = color;
+                    ctx.beginPath();
+                    ctx.arc(0, 0, baseRadius * 1.6, 0, Math.PI * 2);
+                    ctx.fill();
+
+                    // Núcleo sólido de alta visibilidad
+                    ctx.globalAlpha = 0.95;
+                    ctx.beginPath();
+                    ctx.arc(0, 0, baseRadius, 0, Math.PI * 2);
+                    ctx.fill();
+
+                    // Borde de contraste (blanco o negro según inversión)
+                    ctx.strokeStyle = this.isInverted ? '#000000' : '#ffffff';
+                    ctx.lineWidth = 2.5;
+                    ctx.beginPath();
+                    ctx.arc(0, 0, baseRadius, 0, Math.PI * 2);
+                    ctx.stroke();
+
+                    // Etiqueta de Jugador (P1, P2, P3...)
+                    ctx.fillStyle = this.isInverted ? '#000000' : '#ffffff';
+                    ctx.font = 'bold 12px monospace';
+                    ctx.fillText(`P${d.id + 1}`, baseRadius + 6, 4);
+
+                    ctx.restore();
+                }
+            }
         }
     }
 }
